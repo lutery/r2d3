@@ -108,33 +108,35 @@ def run_gym_rainbow(
     env.close()
 
 
-
+# todo 补齐函数参数
 def run_gym_r2d3(
-        enable_train,
-        env_name,
-        kwargs,
-        nb_trains,
-        test_actor=None,
+        enable_train, # 运行模式，True表示训练，False表示测试
+        env_name, # 环境名称
+        kwargs, # 训练参数
+        nb_trains, # 训练的总步数
+        test_actor=None, # 用于测试验证时的动作选择器
         log_warmup=0,
-        log_interval1=10,
-        log_interval2=0,
+        log_interval1=10, # 日志打印间隔
+        log_interval2=0, # todo 为啥有两个间隔？
         log_change_count=5,
         log_test_episodes=10,
         is_load_weights=False,
-        checkpoint_interval=0,
-        skip_movie_save=False,
+        checkpoint_interval=0, # 检查点保存间隔
+        skip_movie_save=False, # 是否跳过保存动画，用于回放
     ):
-    if log_interval2 == 2:
+    if log_interval2 == 2: # 不管，设计问题
         log_interval2 = log_interval1
-    env = gym.make(env_name)
+    env = gym.make(env_name) # 这里直接构建环境？不进行各种处理？
 
-    # R2D3
+    # R2D3 构建
     manager = R2D3(**kwargs)
-
+    
+    # 如果没有传入测试的动作选择器，那么就不尽兴测试验证以及相关的环境构建
     if test_actor is None:
         test_env = None
     else:
         test_env = gym.make(env_name)
+    # 构建日志打印
     log = Logger2StageR2D3(
         warmup=log_warmup,
         interval1=log_interval1,
@@ -149,6 +151,7 @@ def run_gym_r2d3(
     if enable_train:
         print("--- start ---")
         print("'Ctrl + C' is stop.")
+        # 构建保存管理器
         save_manager = SaveManager(
             save_dirpath="tmp_{}".format(env_name),
             is_load=is_load_weights,

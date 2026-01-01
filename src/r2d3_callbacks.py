@@ -13,7 +13,7 @@ from .common import LoggerType
 
 
 class SaveManager(R2D3Callback):
-    def __init__(self,
+    def __init__(self, # 补齐以下参数的作用
             save_dirpath,
             is_load=False,
             save_overwrite=True,
@@ -97,7 +97,7 @@ class SaveManager(R2D3Callback):
 
 
 class Logger2StageR2D3(R2D3Callback):
-    def __init__(self,
+    def __init__(self, # todo 补齐参数注释
             interval1,  # stage1 の interval
             interval2,  # stage2 の interval
             change_count,  # stage1->2 へ移行する回数

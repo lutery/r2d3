@@ -24,8 +24,13 @@ episode_save_dir = "tmp_{}.".format(ENV_NAME)
 
 
 def create_parameter():
+    '''
+    Docstring for create_parameter
+    创建并返回用于训练的参数字典，其中环境的参数通过临时make一个环境获得
+    todo 补齐训练参数
+    '''
 
-    env = gym.make(ENV_NAME)
+    env = gym.make(ENV_NAME) # 构建环境
     
     # ゲーム情報
     print("action_space      : " + str(env.action_space))
@@ -40,17 +45,17 @@ def create_parameter():
     warmup = 50_000
 
     kwargs = {
-        "input_shape": input_shape, 
-        "input_type": input_type,
-        "nb_actions": env.action_space.n, 
+        "input_shape": input_shape,  # 环境的输入shape
+        "input_type": input_type, # 输入的类型，例如RAM或者图像等
+        "nb_actions": env.action_space.n, # 环境的动作数量
         "optimizer": Adam(lr=0.001),
         "metrics": [],
 
-        "image_model": image_model,
-        "input_sequence": 12,         # 入力フレーム数
-        "dense_units_num": 32,       # dense層のユニット数
-        "enable_dueling_network": True,
-        "dueling_network_type": DuelingNetwork.AVERAGE,  # dueling networkで使うアルゴリズム
+        "image_model": image_model, # todo 可能是支持自定义检测模型
+        "input_sequence": 12,         # 入力フレーム数 todo
+        "dense_units_num": 32,       # dense層のユニット数 todo
+        "enable_dueling_network": True, # todo
+        "dueling_network_type": DuelingNetwork.AVERAGE,  # dueling networkで使うアルゴリズム todo
         "lstm_type": LstmType.STATELESS,           # 使用するLSTMアルゴリズム
         "lstm_units_num": 32,             # LSTMのユニット数
         "lstm_ful_input_length": 2,       # ステートフルLSTMの入力数
@@ -113,9 +118,16 @@ def run_rainbow(enable_train):
 
 class MyActor(Actor):
     def getPolicy(self, actor_index, actor_num):
-        return EpsilonGreedy(0.1)
+        return EpsilonGreedy(0.1) # 返回一个epsilon-greedy动作策略
 
     def fit(self, index, agent):
+        '''
+        todo 这个是在干嘛？
+        
+        :param self: Description
+        :param index: Description
+        :param agent: Description
+        '''
         env = gym.make(ENV_NAME)
         agent.fit(env, visualize=False, verbose=0)
         env.close()
@@ -129,12 +141,17 @@ class MyActor2(MyActor):
         return EpsilonGreedy(0.2)
 
 def run_r2d3(enable_train):
-    kwargs = create_parameter()
+    '''
+    Docstring for run_r2d3
+    
+    :param enable_train: 运行模式，True表示训练，False表示测试
+    '''
+    kwargs = create_parameter() # 构建训练的参数
 
     #kwargs["actors"] = [MyActor1]
-    kwargs["actors"] = [MyActor1, MyActor2]
-    kwargs["gamma"] = 0.997
-    kwargs["actor_model_sync_interval"] = 50  # learner から model を同期する間隔
+    kwargs["actors"] = [MyActor1, MyActor2] # 多个actor todo 这几个是干嘛的？看起来适合环境交互的作用
+    kwargs["gamma"] = 0.997 # 折扣因子，应该是用于计算回报的时候使用
+    kwargs["actor_model_sync_interval"] = 50  # learner から model を同期する間隔 这个看起来是有点像同步到target net的间隔
 
     run_gym_r2d3(enable_train, ENV_NAME, kwargs,
         nb_trains=100_000,
@@ -154,10 +171,10 @@ if __name__ == '__main__':
     #run_play(env, episode_save_dir, kwargs["processor"])
     #run_replay(episode_save_dir)
 
-    run_rainbow(enable_train=True)
+    # run_rainbow(enable_train=True)
     #run_rainbow(enable_train=False)  # test only
 
-    #run_r2d3(enable_train=True)
+    run_r2d3(enable_train=True)
     #run_r2d3(enable_train=False)  # test only
 
 

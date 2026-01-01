@@ -36,7 +36,7 @@ for device in tf.config.experimental.list_physical_devices('GPU'):
 #---------------------------------------------------
 class R2D3():
     def __init__(self, 
-        # model関係
+        # model関係 todo 补齐训练参数注释
         input_shape,
         input_type,
         nb_actions,  # アクション数(出力)
@@ -45,7 +45,7 @@ class R2D3():
         optimizer,
         processor=None,
         metrics=[],
-        image_model=None,  # imegeモデルを指定
+        image_model=None,  # imegeモデルを指定 应该是模型的输入数据类型的指定，如果没有传入则是非图像输入，如果有传入则按照传入的数据类型做处理（比如灰度图、彩色图等）
         input_sequence=4,  # 入力フレーム数
         dense_units_num=512,          # Dense層のユニット数
         enable_dueling_network=True,  # dueling_network有効フラグ
@@ -87,11 +87,11 @@ class R2D3():
 
         #--- check
         if lstm_type != LstmType.STATEFUL:
-            burnin_length = 0
+            burnin_length = 0 # todo 这个是干嘛用的？
         
         assert memory.capacity > batch_size, "Memory capacity is small.(Larger than batch size)"
         assert memory_warmup_size > batch_size, "Warmup steps is few.(Larger than batch size)"
-
+        
         if image_model is None:
             assert input_type == InputType.VALUES
         else:
@@ -102,7 +102,14 @@ class R2D3():
             # LSTMを使わない場合：
             #   input_sequenceが1：全て使えます。
             #   input_sequenceが1以外：GRAY_2ch のみ使えます。
+            # 图像输入约束
+            # 使用LSTM时：图像可以以 (宽度, 高度, 通道数) 格式输入。
+            # 不使用LSTM时：
+            # input_sequence 为 1：可以使用任意格式。
+            # input_sequence 不为 1：仅可使用 GRAY_2ch 格式。
             if lstm_type == LstmType.NONE and input_sequence != 1:
+                # todo 为啥？
+                # todo input_sequence 是啥？
                 assert (input_type == InputType.GRAY_2ch), "input_iimage can use GRAY_2ch."
 
         #---
@@ -157,13 +164,13 @@ class R2D3():
             p.terminate()
 
     def train(self, 
-            nb_trains,
-            manager_allocate="/device:CPU:0",
-            learner_allocate="/device:GPU:0",
-            callbacks=[],
+            nb_trains, # 训练的总步数
+            manager_allocate="/device:CPU:0", # manager分配位置 todo 什么是 manager 
+            learner_allocate="/device:GPU:0", # learner分配位置 
+            callbacks=[], # 回调对象，通常用于监控、保存
         ):
 
-        # GPU確認
+        # GPU確認 进一步确认gpu是否可用
         # 参考: https://qiita.com/studio_haneya/items/4dfaf2fb2ac44818e7e0
         if len(tf.config.experimental.list_physical_devices('GPU')) > 0:
             self.enable_GPU = True
@@ -172,62 +179,73 @@ class R2D3():
 
         #--- init
         self.kwargs["nb_trains"] = nb_trains
-        self.kwargs["callbacks"] = R2D3CallbackList(callbacks)
-        actor_num = len(self.kwargs["actors"])
+        self.kwargs["callbacks"] = R2D3CallbackList(callbacks) # 将回调封装一层
+        actor_num = len(self.kwargs["actors"]) # 动作选择器数量
         learner_allocate = learner_allocate
-        verbose = self.kwargs["verbose"]
+        verbose = self.kwargs["verbose"] # 日志打印等级
 
+        # 根据是否启用gpu，选择不同的训练方式
         if self.enable_GPU:
             self._train_allocate(manager_allocate, actor_num, learner_allocate, verbose)
         else:
             self._train(actor_num, learner_allocate, verbose)
 
     def _train_allocate(self, allocate, *args):
-        with tf.device(allocate):
+        with tf.device(allocate): # 由于是tf的框架，这里指定使用哪个设备
             self._train(*args)
 
     def _train(self, actor_num, learner_allocate, verbose):
+        '''
+        Docstring for _train
+        
+        :param self: 
+        :param actor_num: 动作选择器数量
+        :param learner_allocate: learner分配位置
+        :param verbose: 日志打印等级
+        '''
     
-        # 通信用変数
+        # 通信用変数 以下是干嘛的？
         self.learner_end_signal = mp.Value(ctypes.c_bool, False)
         self.is_learner_end = mp.Value(ctypes.c_bool, False)
         self.train_count = mp.Value(ctypes.c_int, 0)
 
-        # 経験通信用
+        # 経験通信用 todo
         exp_q = mp.Queue()
         
-        weights_qs = []
-        self.is_actor_ends = []
+        weights_qs = [] # 同步模型权重的队列
+        self.is_actor_ends = [] # todo 看起来是存储每个actor是否结束
         for _ in range(actor_num):
             # model weights通信用
-            weights_q = mp.Queue()
+            weights_q = mp.Queue() # todo
             weights_qs.append(weights_q)
             self.is_actor_ends.append(mp.Value(ctypes.c_bool, False))
 
-        self.kwargs["callbacks"].on_r2d3_train_begin()
-        t0 = time.time()
+        self.kwargs["callbacks"].on_r2d3_train_begin() # 调用回调，通知训练开始
+        t0 = time.time() # 计时开始
         try:
 
-            # learner ps の実行
+            # learner ps の実行 学习参数
             learner_args = (
                 self.kwargs,
                 exp_q,
                 weights_qs,
-                self.learner_end_signal,
-                self.is_learner_end,
-                self.train_count,
+                self.learner_end_signal, # 终止信号
+                self.is_learner_end, # 是否学习终止信号
+                self.train_count, # 训练步数
             )
+            # 在多进程训练中，默认是使用cpu训练，如果有启用gpu，则需要传入额外的参数指明
+            # 
             if self.enable_GPU:
                 learner_args = (learner_allocate,) + learner_args
                 self.learner_ps = mp.Process(target=learner_run_allocate, args=learner_args)
             else:
                 self.learner_ps = mp.Process(target=learner_run, args=learner_args)
-            self.learner_ps.start()
-
-            # actor ps の実行
+            self.learner_ps.start() # 开始训练进程
+ 
+            # actor ps の実行 感觉这里应该是观察采集的进程 todo
             self.actors_ps = []
             for i in range(actor_num):
-                # args
+                # args 动作选择的参数
                 actor_args = (
                     i,
                     self.kwargs,
@@ -244,18 +262,18 @@ class R2D3():
                 else:
                     ps = mp.Process(target=actor_run, args=actor_args)
                 self.actors_ps.append(ps)
-                ps.start()
+                ps.start() # 开始环境采集进程
 
             # 終了を待つ
             while True:
                 time.sleep(1)  # polling time
 
-                # learner終了確認
+                # learner終了確認 如果学习终止，则停止训练，这里应该是从learner进程中获取的终止信号
                 if self.is_learner_end.value:
                     break
 
-                # actor終了確認
-                f = True
+                # actor終了確認 # 这个是啥信号？也是终止信号？什么时候触发
+                f = True 
                 for is_actor_end in self.is_actor_ends:
                     if not is_actor_end.value:
                         f = False
@@ -268,17 +286,18 @@ class R2D3():
         except Exception:
             print(traceback.format_exc())
         if verbose > 0:
+            # 训练结束日志打印
             print("done, took {:.3f} seconds".format(time.time() - t0))
 
-        self.kwargs["callbacks"].on_r2d3_train_end()
+        self.kwargs["callbacks"].on_r2d3_train_end()  # 通知训练结束
         
-        # learner に終了を投げる
+        # learner に終了を投げる 将终止信号发送给learner，退出训练进程
         self.learner_end_signal.value = True
 
         # learner が終了するまで待つ
         t0 = time.time()
         while not self.is_learner_end.value:
-            if time.time() - t0 < 360:  # timeout
+            if time.time() - t0 < 360:  # timeout 还记录着是否超时
                 if verbose > 0:
                     print("learner end timeout.")
                     break
@@ -300,6 +319,7 @@ class R2D3():
 # create model
 #---------------------------------------------------
 def build_compile_model(kwargs):
+    # 根据参数构建模型
     input_shape = kwargs["input_shape"]
     input_type = kwargs["input_type"]
     image_model = kwargs["image_model"]
@@ -311,66 +331,77 @@ def build_compile_model(kwargs):
     dense_units_num = kwargs["dense_units_num"]
     nb_actions = kwargs["nb_actions"]
     dueling_network_type = kwargs["dueling_network_type"]
-    optimizer = kwargs["optimizer"]
-    metrics = kwargs["metrics"]
+    optimizer = kwargs["optimizer"] # 选择使用的优化器
+    metrics = kwargs["metrics"] # 选择采集的指标 都是keras的参数要求
 
-
+    # 构建输入层 ，这边仅仅只是构建一个输入，不做任何事情，约束输入的shape
     if input_type == InputType.VALUES:
+        if lstm_type != LstmType.STATEFUL:  # 不包含上一个状体的信息，则每次训练仅输入一个序列即可
+            c = input_ = Input(shape=(input_sequence,) + input_shape)
+        else:
+            c = input_ = Input(batch_shape=(batch_size, input_sequence) + input_shape)  # 如果包含上一个状态的信息，则每次训练需要输入多个batch序列，每个batch之间都是连续的 todo
+    elif input_type == InputType.GRAY_2ch: # 输入图像为灰度图（h,w）
         if lstm_type != LstmType.STATEFUL:
             c = input_ = Input(shape=(input_sequence,) + input_shape)
         else:
             c = input_ = Input(batch_shape=(batch_size, input_sequence) + input_shape)
-    elif input_type == InputType.GRAY_2ch:
-        if lstm_type != LstmType.STATEFUL:
-            c = input_ = Input(shape=(input_sequence,) + input_shape)
-        else:
-            c = input_ = Input(batch_shape=(batch_size, input_sequence) + input_shape)
-    else:
+    else: # 输入的是灰度图或者彩色图
         if lstm_type != LstmType.STATEFUL:
             c = input_ = Input(shape=input_shape)
         else:
             c = input_ = Input(batch_shape=(batch_size, input_sequence) + input_shape)
 
-    if image_model is None:
+    if image_model is None: # 输入的数据是非图像数据
         # input not image
         if lstm_type == LstmType.NONE:
-            c = Flatten()(c)
+            c = Flatten()(c) # 如果没有LSTM则展平所有的序列一起处理
         else:
-            c = TimeDistributed(Flatten())(c)
+            # imeDistributed 会对每个时间步独立应用相同的层，并且共享权重
+            # 相当于在每个时间步上应用相同的Flatten层
+            # todo 作用
+            c = TimeDistributed(Flatten())(c) # 如果有LSTM则对每个时间序列单独展平
     else:
-        # input image
+        # input image 这边处理输入的是图像数据
         if lstm_type == LstmType.NONE:
-            enable_lstm = False
+            enable_lstm = False # 是否启用了LSTM
             if input_type == InputType.GRAY_2ch:
                 # (input_seq, w, h) ->(w, h, input_seq)
+                # 为什么不使用LSTM而是直接把时间序列放到通道维度上？
+                # 因为keras的需要
                 c = Permute((2, 3, 1))(c)
         elif lstm_type == LstmType.STATELESS or lstm_type == LstmType.STATEFUL:
             enable_lstm = True
             if input_type == InputType.GRAY_2ch:
+                # 如果启用了lstm，那么对于GRAY_2的输入，需要扩展维度，给最后一维度增加一个通道数 1
                 # (time steps, w, h) -> (time steps, w, h, ch)
                 c = Reshape((input_sequence, ) + input_shape + (1,) )(c)
         else:
+            # 防御性编程
             raise ValueError('lstm_type is not undefined')
+        # todo 如果启用了LSTM，为什么要在create_image_model里面使用TimeDistributed来处理？
         c = image_model.create_image_model(c, enable_lstm)
 
-    # lstm layer
+    # lstm layer 创建LSTM层
+    # 下面的LSTM都是默认输出最后一个时间步的输出
     if lstm_type == LstmType.STATELESS:
         c = LSTM(lstm_units_num, name="lstm")(c)
     elif lstm_type == LstmType.STATEFUL:
         c = LSTM(lstm_units_num, stateful=True, name="lstm")(c)
 
-    # dueling network
+    # dueling network 
     if enable_dueling_network:
-        # value
+        # 构建多路dqn的网络
+        # value 预测价值
         v = Dense(dense_units_num, activation="relu")(c)
         v = Dense(1, name="v")(v)
 
-        # advance
+        # advance 预测动作Q值
         adv = Dense(dense_units_num, activation='relu')(c)
         adv = Dense(nb_actions, name="adv")(adv)
 
         # 連結で結合
         c = Concatenate()([v,adv])
+        # 根据不同的dueling网络类型，计算最终的动作Q值
         if dueling_network_type == DuelingNetwork.AVERAGE:
             c = Lambda(lambda a: K.expand_dims(a[:, 0], -1) + a[:, 1:] - K.mean(a[:, 1:], axis=1, keepdims=True), output_shape=(nb_actions,))(c)
         elif dueling_network_type == DuelingNetwork.MAX:
@@ -380,10 +411,13 @@ def build_compile_model(kwargs):
         else:
             raise ValueError('dueling_network_type is not undefined')
     else:
+        # 如果没有开启双路DQN，则直接输出动作Q值
         c = Dense(dense_units_num, activation="relu")(c)
         c = Dense(nb_actions, activation="linear", name="adv")(c)
     
+    # 构建模型
     model = Model(input_, c)
+    # 指定模型的损失函数、优化器、评估指标
     model.compile(loss=clipped_error_loss, optimizer=optimizer, metrics=metrics)
     
     return model
@@ -398,11 +432,11 @@ def learner_run_allocate(allocate, *args):
 
 def learner_run(
         kwargs, 
-        exp_q,
-        weights_qs,
-        learner_end_signal,
-        is_learner_end,
-        train_count,
+        exp_q, # 在不同的进程之间传递采集经验的队列
+        weights_qs, # 在不同的进程之间传递模型权重的队列
+        learner_end_signal, # 终止信号
+        is_learner_end, # 是否学习终止信号
+        train_count, # 训练步数
     ):
     nb_trains = kwargs["nb_trains"]
     verbose = kwargs["verbose"]
@@ -817,9 +851,21 @@ class ActorStop(rl.callbacks.Callback):
             raise KeyboardInterrupt()
 
 class Actor():
-    allocate = "/device:CPU:0"
+    '''
+    Docstring for Actor
+    构建一个Actor的基类，子类必须实现getPolicy和fit方法
+    todo ： 接口说明
+    '''
+    allocate = "/device:CPU:0" # 运行的设备，默认是cpu，子类可以重写这个属性
 
     def getPolicy(self, actor_index, actor_num):
+        '''
+        返回一个动作选择的策略
+        
+        :param self: Description
+        :param actor_index: Description
+        :param actor_num: Description
+        '''
         raise NotImplementedError()
 
     def fit(self, index, agent):
@@ -827,22 +873,24 @@ class Actor():
 
 
 def actor_run_allocate(allocate, *args):
+    # allocate： 指定运行设备
     with tf.device(allocate):
         actor_run(*args)
 
 def actor_run(
+        # 补齐参函数
         actor_index,
         kwargs, 
-        exp_q,
-        weights_q,
-        is_learner_end,
-        train_count,
-        is_actor_end,
+        exp_q, # 在不同的进程之间传递采集经验的队列
+        weights_q, # 在不同的进程之间传递模型权重的队列
+        is_learner_end, # 是否学习终止信号
+        train_count, # 训练步数
+        is_actor_end, # actor结束信号
     ):
-    verbose = kwargs["verbose"]
-    callbacks = kwargs["callbacks"]
+    verbose = kwargs["verbose"] # 日志等级
+    callbacks = kwargs["callbacks"] # 统一回调对象
 
-    actor = kwargs["actors"][actor_index]()
+    actor = kwargs["actors"][actor_index]() # 根据传入的index，创建actor对象，看来这里是可以创建不同的actor类型，满足不同的场景下使用
 
     runner = ActorRunner(
         actor_index,
@@ -855,12 +903,12 @@ def actor_run(
     )
 
     try:
-        callbacks.on_r2d3_actor_begin(actor_index, runner)
+        callbacks.on_r2d3_actor_begin(actor_index, runner) # 通知actor开始，估计是开始采集数据了
 
         # run
         if verbose > 0:
             print("Actor{} Start!".format(actor_index))
-        actor.fit(actor_index, runner)
+        actor.fit(actor_index, runner) # 开始actor的训练过程
         
     except KeyboardInterrupt:
         pass
@@ -879,29 +927,40 @@ def actor_run(
 
 
 class ActorRunner(rl.core.Agent):
-    def __init__(self, 
-            actor_index,
-            kwargs,
-            actor,
-            exp_q,
-            weights_q,
-            is_learner_end,
-            train_count,
+    # ActorRunner 是 R2D3 中负责与环境交互、采集经验的核心类，它继承自 rl.core.Agent（keras-rl 框架的 Agent 基类）。
+    '''
+    ActorRunner 的职责：
+
+    根据当前策略选择动作
+    执行动作，观察环境反馈
+    计算 TD-error 和 priority
+    将经验发送给 Learner
+    定期从 Learner 同步最新权重
+    '''
+    def __init__(self,  # todo 补齐参数注释
+            actor_index, # actor的索引，第几个交互对象
+            kwargs, # todo
+            actor, # actor 对象
+            exp_q, # 在不同的进程之间传递采集经验的队列
+            weights_q, # 在不同的进程之间传递模型权重的队列
+            is_learner_end, # 是否学习终止信号
+            train_count, # 训练步数
         ):
         super(ActorRunner, self).__init__(kwargs["processor"])
         self.is_learner_end = is_learner_end
         self.train_count = train_count
-        self.callbacks = kwargs.get("callbacks", [])
+        self.callbacks = kwargs.get("callbacks", []) # 获取回调对象
 
         self.actor_index = actor_index
         self.actor = actor
         self.exp_q = exp_q
         self.weights_q = weights_q
-        self.actors_num = len(kwargs["actors"])
+        self.actors_num = len(kwargs["actors"]) # 获取actor数量
 
+        # 以下参数的作用 todo
         self.enable_rescaling = kwargs["enable_rescaling"]
         self.rescaling_epsilon = kwargs["rescaling_epsilon"]
-        self.action_policy = actor.getPolicy(actor_index, self.actors_num)
+        self.action_policy = actor.getPolicy(actor_index, self.actors_num) # 获取动作的策略，根据索引和数量，当然本代码中暂时无用
         self.nb_actions = kwargs["nb_actions"]
         self.input_shape = kwargs["input_shape"]
         self.input_sequence = kwargs["input_sequence"]
@@ -919,28 +978,28 @@ class ActorRunner(rl.core.Agent):
 
         self.enable_episode_memory = kwargs["episode_memory"] is not None
 
-        # create model
+        # create model 构建模型
         self.model = build_compile_model(kwargs)
         if self.lstm_type == LstmType.STATEFUL:
-            self.lstm = self.model.get_layer("lstm")
-        model_json = self.model.to_json()
-        self.action_policy.compile(model_json)
-        self.compiled = True  # super
+            self.lstm = self.model.get_layer("lstm") # todo 这里为什么要单独获取lstm层
+        model_json = self.model.to_json() # todo 这里干嘛？
+        self.action_policy.compile(model_json) # todo 这里干嘛？可能无解，因为本代码无用，感觉是从其他框架搬过来的
+        self.compiled = True  # super 标识便已完成，没有编译出错
 
 
     def reset_states(self):  # override
         self.repeated_action = 0
         self.recent_terminal = False
 
-        if self.lstm_type == LstmType.STATEFUL:
-            multi_len = self.reward_multisteps + self.lstm_ful_input_length - 1
-            self.recent_actions = [ 0 for _ in range(multi_len + 1)]
-            self.recent_rewards = [ 0 for _ in range(multi_len)]
-            self.recent_rewards_multistep = [ 0 for _ in range(self.lstm_ful_input_length)]
-            tmp = self.burnin_length + self.input_sequence + multi_len
+        if self.lstm_type == LstmType.STATEFUL: # 如果lstm类型是这个，需要历史数据
+            multi_len = self.reward_multisteps + self.lstm_ful_input_length - 1 # 步数的长度
+            self.recent_actions = [ 0 for _ in range(multi_len + 1)] # 构建最近动作的缓冲区
+            self.recent_rewards = [ 0 for _ in range(multi_len)] # 构建最近奖励的缓冲区
+            self.recent_rewards_multistep = [ 0 for _ in range(self.lstm_ful_input_length)] # 构建当前奖励的缓冲区 todo
+            tmp = self.burnin_length + self.input_sequence + multi_len # todo
             self.recent_observations = [
                 np.zeros(self.input_shape) for _ in range(tmp)
-            ]
+            ] # 构建最近观察的缓冲区 todo 为啥要这么长
             tmp = self.burnin_length + multi_len + 1
             self.recent_observations_wrap = [
                 [np.zeros(self.input_shape) for _ in range(self.input_sequence)] for _ in range(tmp)
@@ -1211,18 +1270,39 @@ class ActorRunner(rl.core.Agent):
 
 
     def fit(self, env, nb_steps=99_999_999_999, callbacks=[], **kwargs):  # override
+        '''
+        env: 环境对象
+        nb_steps: 训练的总步数
+        callbacks: 回调函数列表
+        **kwargs: 其他参数
+        '''
 
         if self.actor_index == -1:
-            # test_actor
+            # todo test_actor 这是啥？ 如果是测试actor则跳过后续的步骤
             super().fit(nb_steps, callbacks, **kwargs)
             return
 
-        callbacks.extend(self.callbacks.callbacks)
+        callbacks.extend(self.callbacks.callbacks) # 添加统一回调对象的回调函数
 
-        # stop
+        # stop 增加停止通知回调
         callbacks.append(ActorStop(self.is_learner_end))
 
-        # keras-rlでの学習
+        # keras-rlでの学習 开始交互后，后续会自动按照如下流程调用模版方法
+        '''
+        for step in range(nb_steps):
+        # 1. 调用 forward() 选择动作
+        action = agent.forward(observation)
+        
+        # 2. 执行动作
+        observation, reward, done, info = env.step(action)
+        
+        # 3. 调用 backward() 处理反馈
+        agent.backward(reward, done)
+        
+        # 4. 如果 done，重置环境
+        if done:
+            observation = env.reset()
+            '''
         super().fit(env, nb_steps=nb_steps, callbacks=callbacks, **kwargs)
 
 
@@ -1257,6 +1337,10 @@ class R2D3Callback(rl.callbacks.Callback):
         pass
 
 class R2D3CallbackList(R2D3Callback):
+    '''
+    Docstring for R2D3CallbackList
+    训练过程中的回调，通常就是把多个回调函数组合在一起，然后在每个事件发生时依次调用它们。
+    '''
     def __init__(self, callbacks):
         self.callbacks = callbacks
 

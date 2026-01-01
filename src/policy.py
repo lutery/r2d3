@@ -10,6 +10,10 @@ from .common import LstmType, clipped_error_loss
 
 class Policy():
     """ Abstract base class for all implemented Policy. """
+    '''
+    构建一个策略的基类，子类必须实现select_action方法
+    todo ： 接口说明
+    '''
 
     def compile(self, model_json):
         pass
@@ -21,14 +25,26 @@ class Policy():
         pass
 
     def select_action(self, agent):
+        '''
+        选择动作接口，一般子类需要实现这个方法，在探索时通过这个接口选择合适的动作
+        
+        :param self: Description
+        :param agent: Description
+        '''
         raise NotImplementedError()
     
 
 class EpsilonGreedy(Policy):
     def __init__(self, epsilon):
-        self.epsilon = epsilon
+        self.epsilon = epsilon # 这个应该是贪婪策略的epsilon值
 
     def select_action(self, agent):
+        '''
+        根据epsilon-greedy策略选择动作，即以epsilon的概率随机选择动作，否则选择Q值最大的动作
+        
+        :param self: Description
+        :param agent: Description
+        '''
         if self.epsilon > random.random():
             # アクションをランダムに選択
             action = random.randint(0, agent.nb_actions-1)
