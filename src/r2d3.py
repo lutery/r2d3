@@ -383,9 +383,13 @@ def build_compile_model(kwargs):
 
     # lstm layer 创建LSTM层
     # 下面的LSTM都是默认输出最后一个时间步的输出
-    if lstm_type == LstmType.STATELESS:
+    if lstm_type == LstmType.STATELESS: 
+        # 无状态LSTM，即每次调用时隐藏状态都会被重置为0
         c = LSTM(lstm_units_num, name="lstm")(c)
     elif lstm_type == LstmType.STATEFUL:
+        # 有状态LSTM，隐藏状态会在不同的批次之间保持连续
+        # 同时有状态的LSTM输入的shape必须包含batch_size，这样估计是为了能够转却的构建隐藏状态
+        # 并且需要保证每次输入的shape中的batch_size都是相同的
         c = LSTM(lstm_units_num, stateful=True, name="lstm")(c)
 
     # dueling network 
@@ -971,7 +975,7 @@ class ActorRunner(rl.core.Agent):
         self.lstm_type = kwargs["lstm_type"]
         self.enable_dueling_network = kwargs["enable_dueling_network"]
         self.priority_exponent = kwargs["priority_exponent"]
-        self.lstm_ful_input_length = kwargs["lstm_ful_input_length"]
+        self.lstm_ful_input_length = kwargs["lstm_ful_input_length"] # todo 这个参数是啥
         self.batch_size = kwargs["batch_size"]
         self.enable_terminal_zero_reward = kwargs["enable_terminal_zero_reward"]
         self.verbose = kwargs["verbose"]
@@ -987,27 +991,27 @@ class ActorRunner(rl.core.Agent):
         self.compiled = True  # super 标识便已完成，没有编译出错
 
 
-    def reset_states(self):  # override
+    def reset_states(self):  # override 在每个episode开始时调用 会自动调用
         self.repeated_action = 0
         self.recent_terminal = False
 
-        if self.lstm_type == LstmType.STATEFUL: # 如果lstm类型是这个，需要历史数据
+        if self.lstm_type == LstmType.STATEFUL: # 如果有状态的lstm类型
             multi_len = self.reward_multisteps + self.lstm_ful_input_length - 1 # 步数的长度
-            self.recent_actions = [ 0 for _ in range(multi_len + 1)] # 构建最近动作的缓冲区
+            self.recent_actions = [ 0 for _ in range(multi_len + 1)] # 构建最近动作的缓冲区 todo 为啥需要+1
             self.recent_rewards = [ 0 for _ in range(multi_len)] # 构建最近奖励的缓冲区
             self.recent_rewards_multistep = [ 0 for _ in range(self.lstm_ful_input_length)] # 构建当前奖励的缓冲区 todo
-            tmp = self.burnin_length + self.input_sequence + multi_len # todo
+            tmp = self.burnin_length + self.input_sequence + multi_len # todo 三个部分的含义是什么？
             self.recent_observations = [
                 np.zeros(self.input_shape) for _ in range(tmp)
             ] # 构建最近观察的缓冲区 todo 为啥要这么长
             tmp = self.burnin_length + multi_len + 1
             self.recent_observations_wrap = [
                 [np.zeros(self.input_shape) for _ in range(self.input_sequence)] for _ in range(tmp)
-            ]
+            ] # todo 这个是什么观察缓冲区
 
             # hidden_state: [(batch_size, lstm_units_num), (batch_size, lstm_units_num)]
             tmp = self.burnin_length + multi_len + 1+1
-            self.model.reset_states()
+            self.model.reset_states() # 重置模型状态
             self.recent_hidden_states = [
                 [K.get_value(self.lstm.states[0]), K.get_value(self.lstm.states[1])] for _ in range(tmp)
             ]
@@ -1289,6 +1293,7 @@ class ActorRunner(rl.core.Agent):
 
         # keras-rlでの学習 开始交互后，后续会自动按照如下流程调用模版方法
         '''
+        调用fit后，因为其继承自rl.core.Agent，所以会自动调用如下流程：
         for step in range(nb_steps):
         # 1. 调用 forward() 选择动作
         action = agent.forward(observation)

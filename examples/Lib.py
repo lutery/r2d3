@@ -128,7 +128,7 @@ def run_gym_r2d3(
         log_interval2 = log_interval1
     env = gym.make(env_name) # 这里直接构建环境？不进行各种处理？
 
-    # R2D3 构建
+    # R2D3 构建 todo 作用是啥？
     manager = R2D3(**kwargs)
     
     # 如果没有传入测试的动作选择器，那么就不尽兴测试验证以及相关的环境构建
