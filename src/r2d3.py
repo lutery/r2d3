@@ -969,7 +969,7 @@ class ActorRunner(rl.core.Agent):
         self.input_shape = kwargs["input_shape"]
         self.input_sequence = kwargs["input_sequence"]
         self.gamma = kwargs["gamma"]
-        self.reward_multisteps = kwargs["reward_multisteps"]
+        self.reward_multisteps = kwargs["reward_multisteps"] # todo
         self.action_interval = kwargs["action_interval"]
         self.burnin_length = kwargs["burnin_length"]
         self.lstm_type = kwargs["lstm_type"]
@@ -1003,7 +1003,7 @@ class ActorRunner(rl.core.Agent):
             tmp = self.burnin_length + self.input_sequence + multi_len # todo 三个部分的含义是什么？
             self.recent_observations = [
                 np.zeros(self.input_shape) for _ in range(tmp)
-            ] # 构建最近观察的缓冲区 todo 为啥要这么长
+            ] # 构建最近观察的缓冲区 todo 为啥要这么长 这个是干嘛的 和 recent_observations_wrap的区别是啥？
             tmp = self.burnin_length + multi_len + 1
             self.recent_observations_wrap = [
                 [np.zeros(self.input_shape) for _ in range(self.input_sequence)] for _ in range(tmp)
@@ -1011,15 +1011,16 @@ class ActorRunner(rl.core.Agent):
 
             # hidden_state: [(batch_size, lstm_units_num), (batch_size, lstm_units_num)]
             tmp = self.burnin_length + multi_len + 1+1
-            self.model.reset_states() # 重置模型状态
+            self.model.reset_states() # 重置模型状态，针对RNN网路（包含LSTM、GRU等），重置内部的循环层的隐藏状态，因为本次流程已经是新流程了，隐藏状态不应该包含之前的信息
             self.recent_hidden_states = [
                 [K.get_value(self.lstm.states[0]), K.get_value(self.lstm.states[1])] for _ in range(tmp)
-            ]
+            ] # todo 看起来是存储最近隐藏层的信息
             
-        else:
+        else: # 如果lstm的类型是不包含隐藏状态
+            # 构建最近额动作、最近的奖励、最近的环境状态缓冲区
             self.recent_actions = [ 0 for _ in range(self.reward_multisteps+1)]
             self.recent_rewards = [ 0 for _ in range(self.reward_multisteps)]
-            self.recent_rewards_multistep = 0
+            self.recent_rewards_multistep = 0 # 这个是干嘛的？
             self.recent_observations = [
                 np.zeros(self.input_shape) for _ in range(self.input_sequence + self.reward_multisteps)
             ]
@@ -1042,19 +1043,20 @@ class ActorRunner(rl.core.Agent):
 
     def forward(self, observation):  # override
         # observation
-        self.recent_observations.pop(0)
-        self.recent_observations.append(observation)
+        self.recent_observations.pop(0) # 每次forward，则pop出最早的一个观察
+        self.recent_observations.append(observation) # 保存最近的一次环境观察
 
-        if self.lstm_type == LstmType.STATEFUL:
-            self.recent_observations_wrap.pop(0)
+        if self.lstm_type == LstmType.STATEFUL: # 如果是有状态的LSTM
+            self.recent_observations_wrap.pop(0) # pop出最早的观察
+            # elf.recent_observations[-self.input_sequence:]： 提取出最新的input_sequence歌观察存储到recent_observations_wrap
             self.recent_observations_wrap.append(self.recent_observations[-self.input_sequence:])
             
-            # tmp
-            self._state0 = self.recent_observations_wrap[-self.burnin_length -1]
+            # tmp 选择recent_observations_wrap中倒数第burnin_length - 1位置的状态
+            self._state0 = self.recent_observations_wrap[-self.burnin_length -1] # todo 这个是什么？
 
         else:
-            # tmp
-            self._state0 = self.recent_observations[:self.input_sequence]
+            # tmp 如果是无状态的，那么这里就是最近的input_sequence个观察 todo 为啥
+            self._state0 = self.recent_observations[:self.input_sequence] # todo 这个是什么？
 
         # tmp
         self._qvals = None
