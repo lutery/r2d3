@@ -87,7 +87,7 @@ class R2D3():
 
         #--- check
         if lstm_type != LstmType.STATEFUL:
-            burnin_length = 0 # todo 这个是干嘛用的？
+            burnin_length = 0 # 这个是干嘛用的？ LSTM模型的烧入长度，因为在采集时模型的隐藏状态和训练时的不一致（即使收集了，但是因为训练时的采样顺序不一样），所以需要烧入一段时间来让隐藏状态趋于稳定
         
         assert memory.capacity > batch_size, "Memory capacity is small.(Larger than batch size)"
         assert memory_warmup_size > batch_size, "Warmup steps is few.(Larger than batch size)"
@@ -962,16 +962,16 @@ class ActorRunner(rl.core.Agent):
         self.actors_num = len(kwargs["actors"]) # 获取actor数量
 
         # 以下参数的作用 todo
-        self.enable_rescaling = kwargs["enable_rescaling"]
+        self.enable_rescaling = kwargs["enable_rescaling"] # 是否缩放累积回报
         self.rescaling_epsilon = kwargs["rescaling_epsilon"]
-        self.action_policy = actor.getPolicy(actor_index, self.actors_num) # 获取动作的策略，根据索引和数量，当然本代码中暂时无用
+        self.action_policy = actor.getPolicy(actor_index, self.actors_num) # 获取动作的策略，根据索引和数量，当然入口为mountaincar的本代码中暂时无用，且返回的是EpsilonGreedy
         self.nb_actions = kwargs["nb_actions"]
         self.input_shape = kwargs["input_shape"]
         self.input_sequence = kwargs["input_sequence"]
         self.gamma = kwargs["gamma"]
-        self.reward_multisteps = kwargs["reward_multisteps"] # todo
+        self.reward_multisteps = kwargs["reward_multisteps"] # todo 感觉有点像多步DQN的作用
         self.action_interval = kwargs["action_interval"]
-        self.burnin_length = kwargs["burnin_length"]
+        self.burnin_length = kwargs["burnin_length"] # 烧入长度）是 R2D3/R2D2 算法中专门为 Stateful LSTM 设计的一个关键超参数，用于解决经验回放与循环网络状态不一致的问题。
         self.lstm_type = kwargs["lstm_type"]
         self.enable_dueling_network = kwargs["enable_dueling_network"]
         self.priority_exponent = kwargs["priority_exponent"]
@@ -992,14 +992,14 @@ class ActorRunner(rl.core.Agent):
 
 
     def reset_states(self):  # override 在每个episode开始时调用 会自动调用
-        self.repeated_action = 0
-        self.recent_terminal = False
+        self.repeated_action = 0 # 用于实现跳帧时执行相同的动作
+        self.recent_terminal = False # 存储最近的一步是否游戏中断了
 
         if self.lstm_type == LstmType.STATEFUL: # 如果有状态的lstm类型
             multi_len = self.reward_multisteps + self.lstm_ful_input_length - 1 # 步数的长度
             self.recent_actions = [ 0 for _ in range(multi_len + 1)] # 构建最近动作的缓冲区 todo 为啥需要+1
-            self.recent_rewards = [ 0 for _ in range(multi_len)] # 构建最近奖励的缓冲区
-            self.recent_rewards_multistep = [ 0 for _ in range(self.lstm_ful_input_length)] # 构建当前奖励的缓冲区 todo
+            self.recent_rewards = [ 0 for _ in range(multi_len)] # 构建最近奖励的缓冲区，每次执行动作后都会更新这个缓冲区
+            self.recent_rewards_multistep = [ 0 for _ in range(self.lstm_ful_input_length)] # 这边存储的是多步奖励的累积回报，步数：multistep
             tmp = self.burnin_length + self.input_sequence + multi_len # todo 三个部分的含义是什么？
             self.recent_observations = [
                 np.zeros(self.input_shape) for _ in range(tmp)
@@ -1020,7 +1020,7 @@ class ActorRunner(rl.core.Agent):
             # 构建最近额动作、最近的奖励、最近的环境状态缓冲区
             self.recent_actions = [ 0 for _ in range(self.reward_multisteps+1)]
             self.recent_rewards = [ 0 for _ in range(self.reward_multisteps)]
-            self.recent_rewards_multistep = 0 # 这个是干嘛的？
+            self.recent_rewards_multistep = 0 # 对于无状态的LSTM中，存储多步累积回报
             self.recent_observations = [
                 np.zeros(self.input_shape) for _ in range(self.input_sequence + self.reward_multisteps)
             ]
@@ -1055,53 +1055,69 @@ class ActorRunner(rl.core.Agent):
             self._state0 = self.recent_observations_wrap[-self.burnin_length -1] # todo 这个是什么？
 
         else:
-            # tmp 如果是无状态的，那么这里就是最近的input_sequence个观察 todo 为啥
+            # tmp 如果是无状态的，那么这里就是最远的input_sequence个观察 todo 为啥
             self._state0 = self.recent_observations[:self.input_sequence] # todo 这个是什么？
 
         # tmp
         self._qvals = None
-        self._state1 = self.recent_observations[-self.input_sequence:]
+        self._state1 = self.recent_observations[-self.input_sequence:] # 获取最近的input_sequence个观察作为下一个状态
+        # 以下两个的作用是啥？
         self._state1_np = np.asarray(self._state1)
         self._state0_np = np.asarray(self._state0)
 
+        # todo 看起来在哪里并没有先烧入预热，然后在计算Q值，都是直接拿隐藏状态进行计算
         if self.training:
+            # 如果开启了训练模式
+            # todo 标注训练模式的不同点
 
             # experienceを送る
             if self.lstm_type == LstmType.STATEFUL:
+                # 有状态的流程
                 
                 #--- priorityを計算
                 # 初回しか使わないので計算量のかかるburn-inは省略
                 # (直前のhidden_statesなのでmodelによる誤差もほぼないため)
 
-                prioritys = []
+                prioritys = [] 
                 for i in range(self.lstm_ful_input_length):
-
+                    
+                    # todo 这些索引都不对齐，后续得看看是如何存储对齐的
                     state0 = self._state0_np
                     state1 = self._state1_np
-                    hidden_states0 = self.recent_hidden_states[self.burnin_length + i]
-                    hidden_states1 = self.recent_hidden_states[self.burnin_length + i + self.reward_multisteps]
-                    action = self.recent_actions[i]
-                    reward = self.recent_rewards_multistep[i]
+                    hidden_states0 = self.recent_hidden_states[self.burnin_length + i] # 获取指定位置的隐藏状态（含烧入长度），也就是说获取烧入位置的隐藏状态
+                    hidden_states1 = self.recent_hidden_states[self.burnin_length + i + self.reward_multisteps] # 同上，包含多步
+                    action = self.recent_actions[i] # 获取指定位置的执行的动作
+                    reward = self.recent_rewards_multistep[i] # 获取多步位置的奖励
 
                     # batchサイズ分増やす
-                    state0_batch = np.full((self.batch_size,)+state0.shape, state0)
-                    state1_batch = np.full((self.batch_size,)+state1.shape, state1)
+                    state0_batch = np.full((self.batch_size,)+state0.shape, state0) # 构建指定i 步位置的状态
+                    state1_batch = np.full((self.batch_size,)+state1.shape, state1) # 构建指定i + reward_multisteps 步位置的状态
 
                     # 現在のQネットワークを出力
-                    self.lstm.reset_states(hidden_states0)
-                    state0_qvals = self.model.predict(state0_batch, self.batch_size)[0]
-                    self.lstm.reset_states(hidden_states1)
-                    state1_qvals = self.model.predict(state1_batch, self.batch_size)[0]
+                    self.lstm.reset_states(hidden_states0) # 这里是将LSTM的隐藏状态重置为采样时的隐藏状态，确保计算的Q值与采样时的状态一致
+                    state0_qvals = self.model.predict(state0_batch, self.batch_size)[0] 
+                    self.lstm.reset_states(hidden_states1) # 同上
+                    state1_qvals = self.model.predict(state1_batch, self.batch_size)[0] # 这里应该是根据reward_multisteps步，计算N步后的Q值分布
 
-                    maxq = np.max(state1_qvals)
-                    td_error = reward + (self.gamma ** self.reward_multisteps) * maxq
-                    priority = abs(td_error - state0_qvals[action])
-                    prioritys.append(priority)
+                    maxq = np.max(state1_qvals)# 选择最大的Q值分布
+                    td_error = reward + (self.gamma ** self.reward_multisteps) * maxq # 根据bellman和n步dnq计算 Q值
+                    priority = abs(td_error - state0_qvals[action]) # 计算Q值和预测的q值的（实际执行动作的Q值）差距，作为优先级，差异越大则优先级越高，需要尽快的拟合
+                    prioritys.append(priority) # 将每个位置 i 的优先级存储到prioritys中
                 
                 # 今回使用したsamplingのpriorityを更新
+                # 这行代码是在把一段序列（sequence）里多个时间步的 priority（这里的 prioritys 是长度为 lstm_ful_input_length 的列表）聚合成一个标量 priority，用于把“整段序列经验”塞进 PER（Prioritized Experience Replay）时的优先级。
+                # np.max(prioritys)：这段序列里最难学/误差最大的那个时间步（最“尖锐”的 TD-error）。
+                # np.average(prioritys)：这段序列整体的平均难度/平均 TD-error。
+                # self.priority_exponent（代码注释里叫 η）：在 [0, 1] 之间，控制“更看重最大值”还是“更看重平均值”。
+                # 在 RNN（尤其是你这里的 Stateful LSTM）训练里，经验通常不是单步 (s,a,r,s')，而是一段序列。这段序列里可能：
+                # 只有某几个时间步的 TD-error 很大（关键转折/稀有奖励），用 max 能确保不被平均“稀释”；
+                # 也可能整体都中等难度，用 average 能避免被某个噪声尖峰主导。
+                # 所以用 η*max + (1-η)*mean 是一种折中：既捕捉关键难点，又保持一定稳定性。
                 priority = self.priority_exponent * np.max(prioritys) + (1-self.priority_exponent) * np.average(prioritys)
+
+                # 也就是说这个事一个超参数，具体事看中啥还是得调参
                 
-                # RemoteMemory に送信
+                # RemoteMemory に送信 todo 下面这些是在送什么？
                 if self.recent_terminal and self.recent_rewards[-1] == 0 and self.enable_terminal_zero_reward:
                     # 報酬が0以外は最後を追加して送る。
                     self.exp_q.put(((
@@ -1145,7 +1161,7 @@ class ActorRunner(rl.core.Agent):
                     ))
 
             else:
-
+                # 这里和上面基本一样，唯一不同的是不再有burnin_length
                 state0 = self._state0_np[np.newaxis,:]
                 state1 = self._state1_np[np.newaxis,:]
                 action = self.recent_actions[0]
@@ -1158,7 +1174,7 @@ class ActorRunner(rl.core.Agent):
                 td_error = reward + (self.gamma ** self.reward_multisteps) * maxq - state0_qvals[action]
                 priority = abs(td_error)
 
-                # RemoteMemory に送信
+                # RemoteMemory に送信 todo 这里是在送什么？
                 self.exp_q.put(((
                         self._state0, 
                         action, 
@@ -1173,50 +1189,58 @@ class ActorRunner(rl.core.Agent):
 
         # 状態の更新
         if self.lstm_type == LstmType.STATEFUL:
-            self.lstm.reset_states(self.recent_hidden_states[-1])
+            self.lstm.reset_states(self.recent_hidden_states[-1]) # 取最近的一次状态设置到lstm中
 
             # hidden_state を更新しつつQ値も取得
-            state = self._state1_np
+            state = self._state1_np # 获取最近的一个观察序列
             state = np.full((self.batch_size,)+state.shape, state)  # batchサイズ分増やす
-            self._qvals = self.model.predict(state, batch_size=self.batch_size)[0]
+            self._qvals = self.model.predict(state, batch_size=self.batch_size)[0] # 预测得到Q值，相当于是走一步
             
-            hidden_state = [K.get_value(self.lstm.states[0]), K.get_value(self.lstm.states[1])]
-            self.recent_hidden_states.pop(0)
-            self.recent_hidden_states.append(hidden_state)
+            hidden_state = [K.get_value(self.lstm.states[0]), K.get_value(self.lstm.states[1])] # 提取走一步后的隐藏状态
+            self.recent_hidden_states.pop(0) # 去除最早的隐藏层状态
+            self.recent_hidden_states.append(hidden_state) # 存入最新的隐藏层状态 todo 那么这里是哪里塞入的？
 
-        if self.recent_terminal:
+        if self.recent_terminal: # 这个状态是哪里设置的？ todo 如果已经结束了则退出，不再给出动作
             return 0  # 終了時はactionを出す必要がない
 
 
         # フレームスキップ(action_interval毎に行動を選択する)
-        action = self.repeated_action
+        action = self.repeated_action # 这里应该是手动实现了类似跳帧的动作
         if self.step % self.action_interval == 0:
+            # 如果达到了动作的间隔则进行跳帧
             
             # 行動を決定
             if self.training:
+                # 训练模式下按照动作策略预测一个动作
                 # training中かつNoisyNetが使ってない場合は action policyに従う
                 action = self.action_policy.select_action(self)
             else:
                 # テスト中またはNoisyNet中の場合
+                # 否责就是选择最大Q值的动作作为输入
                 action = np.argmax(self.get_qvals())
             
             # リピート用
             self.repeated_action = action
 
         # アクション保存
-        self.recent_actions.pop(0)
-        self.recent_actions.append(action)
+        self.recent_actions.pop(0) # 剔除最早的动作
+        self.recent_actions.append(action) # 保存最近的动作
 
-        return action
+        return action # 返回预测的东走
         
 
     def get_qvals(self):
+        '''
+        获取动作的Q值分布
+        '''
+        # 有状态则模型时带状态预测序列的，无状态则模型每次的隐藏状态都是从0开始的
         if self.lstm_type == LstmType.STATEFUL:
-            return self._qvals
+            return self._qvals # 如果有状态的LSTM，那么就直接使用forward中用最近观察序列和最近一次的隐藏状态预测出来的Q值
         else:
+            # 如果无状态
             if self._qvals is None:
-                state = self._state1_np[np.newaxis,:]
-                self._qvals = self.model.predict(state, batch_size=1)[0]
+                state = self._state1_np[np.newaxis,:] # 获取最近的观察序列
+                self._qvals = self.model.predict(state, batch_size=1)[0] # 用最近的观察序列预测Q值
             return self._qvals
     
     def get_state(self):
@@ -1234,31 +1258,40 @@ class ActorRunner(rl.core.Agent):
         return (observation, action, reward)
 
     def backward(self, reward, terminal):  # override
+        '''
+        该接口在环境执行完动作后调用，传入奖励和是否中断
+        '''
         # terminal は env が終了状態ならTrue
         if not self.training:
             return []
 
-        # 報酬の保存
+        # 報酬の保存 更新缓冲区的奖励回报
         self.recent_rewards.pop(0)
         self.recent_rewards.append(reward)
 
         # multi step learning の計算
-        _tmp = 0
+        _tmp = 0 # 存储本次奖励回报的N步累计奖励
+        # todo 从倒数第self.reward_multisteps开始计算多步奖励
         for i in range(-self.reward_multisteps, 0):
             r = self.recent_rewards[i]
             _tmp += r * (self.gamma ** i)
         
         # rescaling
         if self.enable_rescaling:
+            # 如果开启了缩放，则会缩放回报
             _tmp = rescaling(_tmp)
         
         if self.lstm_type == LstmType.STATEFUL:
+            # 如果有状态的需要将计算的多步累积回报存储到缓冲区中
             self.recent_rewards_multistep.pop(0)
             self.recent_rewards_multistep.append(_tmp)
         else:
+            # 如果是无状态的只需要存储一个值即可
             self.recent_rewards_multistep = _tmp
 
         # weightが届いていればmodelを更新
+        # 如果有从其他地方传入了模型的权重，则进行模型权重的更新
+        # todo 为啥要放在这里？放在其他地方是否可以？
         if not self.weights_q.empty():
             weights = self.weights_q.get(timeout=1)
             # 空にする(念のため)
@@ -1268,7 +1301,7 @@ class ActorRunner(rl.core.Agent):
 
         self.recent_terminal = terminal
 
-        return []
+        return [] # 这里应该只是为了满足接口的返回值，实际上在mountaincar中并没有使用这个返回值
 
     @property
     def layers(self):  # override
@@ -1284,7 +1317,7 @@ class ActorRunner(rl.core.Agent):
         '''
 
         if self.actor_index == -1:
-            # todo test_actor 这是啥？ 如果是测试actor则跳过后续的步骤
+            # todo 这里是为了干嘛？啥时候等于-1
             super().fit(nb_steps, callbacks, **kwargs)
             return
 
