@@ -532,10 +532,11 @@ class LearnerRunner():
             self.episode_memory = EpisodeMemory(kwargs["episode_memory"], kwargs["episode_verbose"])
             self.episode_ratio = kwargs["episode_ratio"]
 
-        if self.demo_memory is not None:
+        if self.demo_memory is not None: # 确认这个demo_memory是不是就是引导学习，学习前人的经验加快收敛
             add_memory(kwargs["demo_episode_dir"], self.demo_memory, self)
             assert len(self.demo_memory) > self.batch_size, \
                 "Demo memory size is small."
+            # 以下这些参数的作用
             self.demo_ratio_initial = kwargs["demo_ratio_initial"]
             self.demo_ratio_final = kwargs["demo_ratio_final"]
             if self.demo_ratio_final is None:

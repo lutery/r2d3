@@ -450,13 +450,14 @@ def add_memory(episode_save_dir, memory, agent):
             recent_observations_wrap = [
                 [np.zeros(agent.input_shape) for _ in range(agent.input_sequence)] for _ in range(tmp)
             ] # 最近的观察缓冲区，包装成LSTM需要的格式
+            # 注意recent_observations_wrap是一个数组的数组的格式，即：[[agent.input_sequence], [agent.input_sequence], [agent.input_sequence]... tmp]
 
             # hidden_state: [(batch_size, lstm_units_num), (batch_size, lstm_units_num)]
             tmp = agent.burnin_length + multi_len + 1+1 # todo 这个长度的每段的作用
             agent.model.reset_states() # 这个是tf官方的lstm状态重置，清空状态，设置为0
             recent_hidden_states = [
                 [K.get_value(agent.lstm.states[0]), K.get_value(agent.lstm.states[1])] for _ in range(tmp)
-            ] # 创建一个存储LSTM近期的隐藏状态的缓冲区
+            ] # 创建一个存储LSTM近期的隐藏状态的缓冲区，存储每input_sequence个观察运行后的隐藏层状态
 
         else: 
             # 如果是无状态的，则每次的起步都一样，隐藏状态都是从0开始
@@ -468,31 +469,35 @@ def add_memory(episode_save_dir, memory, agent):
             ] # 最近的观察缓冲区
 
         # episode
-        total_reward = 0
+        total_reward = 0 # 一局游戏最大的奖励
         # 读取存储的一局完整的游戏数据
-        for epi_state in epi_states:
+        for epi_state in epi_states: # 遍历每一步的数据
             # forward
-            recent_observations.pop(0)
-            recent_observations.append(epi_state["observation"])
+            recent_observations.pop(0) # 弹出最早的观察（因为可能存在存储的游戏数据超过了缓冲区的大小）
+            recent_observations.append(epi_state["observation"]) # 保存最新的游戏观察
 
             if agent.lstm_type == LstmType.STATEFUL:
-                recent_observations_wrap.pop(0)
-                recent_observations_wrap.append(recent_observations[-agent.input_sequence:])
+                # 有状态的LSTM，则需要进一步处理recent_observations_wrap
+                recent_observations_wrap.pop(0) # 先弹出最早的观察
+                recent_observations_wrap.append(recent_observations[-agent.input_sequence:]) # 取出recent_observations最新input_sequence长度的观察然后作为一个组合送入recent_observations_wrap缓冲区
             
-            # hidden states update
-            if agent.lstm_type == LstmType.STATEFUL:
-                agent.lstm.reset_states(recent_hidden_states[-1])
+            # hidden states update todo 如果是有状态的LSTM，需要通过真实的观察送入模型，拿到该时刻的隐藏层状态存储起来
+            if agent.lstm_type == LstmType.STATEFUL: # 有状态的LSTM
+                agent.lstm.reset_states(recent_hidden_states[-1]) # 提出最近的一次隐藏层状态，然后设置到lstm层中
 
-                state = np.asarray(recent_observations[-agent.input_sequence:])
-                state = np.full((agent.batch_size,) + state.shape, state)
-                agent.model.predict(state, batch_size=agent.batch_size)
+                state = np.asarray(recent_observations[-agent.input_sequence:]) # 提取出最近的input_sequence长度个观察
+                state = np.full((agent.batch_size,) + state.shape, state) # 创建一个shape = （batch_size， state.shape）的数组，内容全部是state
+                agent.model.predict(state, batch_size=agent.batch_size) # 将最近的观察送入模型进行一次预测 # todo 作用？难道是为了预测拿到真实的隐藏层状态？
 
-                hidden_state = [K.get_value(agent.lstm.states[0]), K.get_value(agent.lstm.states[1])]
+                # 获取真实的隐藏层状态保存到recent_hidden_states
+                hidden_state = [K.get_value(agent.lstm.states[0]), K.get_value(agent.lstm.states[1])] 
                 recent_hidden_states.pop(0)
                 recent_hidden_states.append(hidden_state)
 
             # add memory
+            # 将准备好的数据添加到memory缓冲区中
             if agent.lstm_type == LstmType.STATEFUL:
+                # todo 为什么有状态和无状态塞入memory中的数据不同？
                 memory.add((
                     recent_observations_wrap[:],
                     recent_actions[0:agent.lstm_ful_input_length],
@@ -505,25 +510,28 @@ def add_memory(episode_save_dir, memory, agent):
                     recent_rewards_multistep, 
                     recent_observations[-agent.input_sequence:]))
             
-            # action
+            # action 更新最近执行动作缓冲区的数据
             recent_actions.pop(0)
             recent_actions.append(epi_state["action"])
 
-            # reward
+            # reward 更新最近获得奖励缓冲区的数据
             recent_rewards.pop(0)
             recent_rewards.append(epi_state["reward"])
             total_reward += epi_state["reward"]
 
             # multi step learning の計算
             _tmp = 0
+            # 到倒数第agent.reward_multisteps个便利到倒数第一个
+            # 计算最近reward_multisteps步的累计奖励
             for i in range(-agent.reward_multisteps, 0):
                 r = recent_rewards[i]
-                _tmp += r * (agent.gamma ** i)
+                _tmp += r * (agent.gamma ** i) # todo 这里的计算是否存在问题？i是负数吧
 
             # rescaling
             if agent.enable_rescaling:
-                _tmp = rescaling(_tmp)
+                _tmp = rescaling(_tmp) # 缩放计算的多步奖励
 
+            # todo 为什么有状态的LSTM是将计算的累积奖励存储到缓冲区中，而无状态的LSTM则直接覆盖？
             if agent.lstm_type == LstmType.STATEFUL:
                 recent_rewards_multistep.pop(0)
                 recent_rewards_multistep.append(_tmp)
@@ -547,8 +555,9 @@ def add_memory(episode_save_dir, memory, agent):
         
 
         # 最後の報酬が0じゃないなら0報酬を追加
+        # todo enable_terminal_zero_reward 这个的作用是什么？
         if agent.enable_terminal_zero_reward and recent_rewards[-1] != 0:
-            # add memory
+            # add memory todo 如果最后的奖励不是0，对于有状态的LSTM则添加最后一次计算的累积奖励，但是为啥无状态的添加的是0？
             if agent.lstm_type == LstmType.STATEFUL:
                 memory.add((
                     recent_observations_wrap[:],
