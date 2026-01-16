@@ -491,11 +491,21 @@ class LearnerRunner():
             weights_qs,
             train_count,
         ):
+        '''
+        Docstring for __init__
+        
+        :param self: Description
+        :param kwargs: 可控的训练参数
+        :param exp_q: 经验队列
+        :param weights_qs: 模型权重队列
+        :param train_count: 训练步数
+        '''
         self.exp_q = exp_q
         self.weights_qs = weights_qs
         self.kwargs = kwargs
-        self.actors_num = len(kwargs["actors"])
+        self.actors_num = len(kwargs["actors"]) # 动作选择器数量
 
+        # 后续根据注释的进度进行调整
         self.input_shape = kwargs["input_shape"]
         self.enable_rescaling = kwargs["enable_rescaling"]
         self.memory = kwargs["memory"]
@@ -514,6 +524,7 @@ class LearnerRunner():
         self.demo_memory = kwargs["demo_memory"]
         self.enable_terminal_zero_reward = kwargs["enable_terminal_zero_reward"]
 
+        # todo 这个参数的作用，看起来是存储一局游戏的数据
         if kwargs["episode_memory"] is None:
             self.episode_memory = None
             self.episode_ratio = 0

@@ -410,13 +410,25 @@ class EpisodeReplay(_PlayWindow):
 
 
 def add_memory(episode_save_dir, memory, agent):
+    '''
+    Docstring for add_memory
+    与其叫add不如叫load更合适一些，这个函数是从保存的demo数据中加载数据到memory中
+    存储的记忆格式是一个episode一文件，文件中存储了一个list，list的每个元素是一个dict，包含
+    "observation", "action", "reward", "done"等字段
+    
+    :param episode_save_dir: 记忆存储的路径
+    :param memory: Description
+    :param agent: Description
+    '''
+
     for fn in glob.glob(os.path.join(episode_save_dir, "episode*.dat")):
         print("load: {}".format(fn))
         with open(fn, 'rb') as f:
-            epi_states = pickle.load(f)
+            epi_states = pickle.load(f) # 记忆文件使用pickle存储的
         if len(epi_states) <= 0:
             continue
         
+        # 防御式编程，检查episode的shape是否和agent的input shape匹配
         if agent.input_shape != epi_states[0]["observation"].shape:
             print("episode shape is not match. input_shape{} != epi_shape{}".format(
                 agent.input_shape,
@@ -424,38 +436,40 @@ def add_memory(episode_save_dir, memory, agent):
             ))
             continue
 
-        # init
+        # init 初始化缓冲区
         if agent.lstm_type == LstmType.STATEFUL:
-            multi_len = agent.reward_multisteps + agent.lstm_ful_input_length - 1
-            recent_actions = [ 0 for _ in range(multi_len + 1)]
-            recent_rewards = [ 0 for _ in range(multi_len)]
-            recent_rewards_multistep = [ 0 for _ in range(agent.lstm_ful_input_length)]
-            tmp = agent.burnin_length + agent.input_sequence + multi_len
+            multi_len = agent.reward_multisteps + agent.lstm_ful_input_length - 1 # 有状态LSTM的多步长度，包含多步奖励和ful_input长度
+            recent_actions = [ 0 for _ in range(multi_len + 1)] # 最近的动作缓冲区
+            recent_rewards = [ 0 for _ in range(multi_len)] # 最近的奖励缓冲区
+            recent_rewards_multistep = [ 0 for _ in range(agent.lstm_ful_input_length)] # 最近的多步奖励缓冲区
+            tmp = agent.burnin_length + agent.input_sequence + multi_len # todo 这三段的作用，为什么会比之前的缓冲区长
             recent_observations = [
                 np.zeros(agent.input_shape) for _ in range(tmp)
-            ]
-            tmp = agent.burnin_length + multi_len + 1
+            ] # 最近的观察缓冲区
+            tmp = agent.burnin_length + multi_len + 1 # todo 这个长度的每段的作用
             recent_observations_wrap = [
                 [np.zeros(agent.input_shape) for _ in range(agent.input_sequence)] for _ in range(tmp)
-            ]
+            ] # 最近的观察缓冲区，包装成LSTM需要的格式
 
             # hidden_state: [(batch_size, lstm_units_num), (batch_size, lstm_units_num)]
-            tmp = agent.burnin_length + multi_len + 1+1
-            agent.model.reset_states()
+            tmp = agent.burnin_length + multi_len + 1+1 # todo 这个长度的每段的作用
+            agent.model.reset_states() # 这个是tf官方的lstm状态重置，清空状态，设置为0
             recent_hidden_states = [
                 [K.get_value(agent.lstm.states[0]), K.get_value(agent.lstm.states[1])] for _ in range(tmp)
-            ]
+            ] # 创建一个存储LSTM近期的隐藏状态的缓冲区
 
-        else:
-            recent_actions = [ 0 for _ in range(agent.reward_multisteps+1)]
-            recent_rewards = [ 0 for _ in range(agent.reward_multisteps)]
-            recent_rewards_multistep = 0
+        else: 
+            # 如果是无状态的，则每次的起步都一样，隐藏状态都是从0开始
+            recent_actions = [ 0 for _ in range(agent.reward_multisteps+1)] # 最近的动作缓冲区
+            recent_rewards = [ 0 for _ in range(agent.reward_multisteps)] # 最近的奖励缓冲区
+            recent_rewards_multistep = 0 # todo 为啥没有最近的多步奖励缓冲区为0？
             recent_observations = [
                 np.zeros(agent.input_shape) for _ in range(agent.input_sequence + agent.reward_multisteps)
-            ]
+            ] # 最近的观察缓冲区
 
         # episode
         total_reward = 0
+        # 读取存储的一局完整的游戏数据
         for epi_state in epi_states:
             # forward
             recent_observations.pop(0)
