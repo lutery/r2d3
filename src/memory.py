@@ -27,10 +27,17 @@ class Memory():
 
 class _bisect_wrapper():
     def __init__(self, data, priority):
+        '''
+        data: 采集的环境经验数据
+        priority: 优先级
+
+        todo 作用
+        '''
         self.data = data
         self.priority = priority
     
     def __lt__(self, o):  # a<b
+        # 比较方法，对比优先级
         return self.priority < o.priority
 
 
@@ -116,19 +123,31 @@ class PERGreedyMemory(Memory):
 class SumTree():
     """
     copy from https://github.com/jaromiru/AI-blog/blob/5aa9f0b/SumTree.py
+    看来是使用了开源的代码
+    todo 后续注释
     """
 
     def __init__(self, capacity):
-        self.capacity = capacity
-        self.write = 0
-        self.tree = [ 0 for _ in range( 2*capacity - 1 )]
-        self.data = [ None for _ in range(capacity)]
+        self.capacity = capacity # 存储容量
+        self.write = 0 # 写入位置
+        self.tree = [ 0 for _ in range( 2*capacity - 1 )] # 用以一个列表构造树
+        self.data = [ None for _ in range(capacity)] # 构建一个存储数据的列表
 
     def _propagate(self, idx, change):
-        parent = (idx - 1) // 2
+        '''
+        Docstring for _propagate
+        
+        :param self: Description
+        :param idx: 目标位置索引
+        :param change: 变化量 todo 将当前数据的优先级减去目标位置的优先级，得到变化量
+        '''
 
-        self.tree[parent] += change
+        parent = (idx - 1) // 2 # 计算目标位置的父节点索引
 
+        self.tree[parent] += change # 将变化量加到父节点上
+
+        # 父节点不为空则继续更新父节点，直到根节点
+        # todo 具体是如何变化的？
         if parent != 0:
             self._propagate(parent, change)
 
@@ -148,19 +167,32 @@ class SumTree():
         return self.tree[0]
 
     def add(self, p, data):
-        idx = self.write + self.capacity - 1
+        '''
+        Docstring for add
+        
+        :param self: Description
+        :param p: 优先级
+        :param data: 经验数据（状态，动作，奖励，下一个状态，是否结束）
+        '''
+        idx = self.write + self.capacity - 1 # 计算树中的索引 = 写入位置 + 树的叶子节点起始位置 todo 这里不是已经超过capacity了吗？
 
-        self.data[self.write] = data
+        # 命名冲突，不好，待改进
+        self.data[self.write] = data # 将数据存储在data列表中
         self.update(idx, p)
 
-        self.write += 1
+        self.write += 1 # 更新写入位置
         if self.write >= self.capacity:
             self.write = 0
 
     def update(self, idx, p):
-        change = p - self.tree[idx]
+        '''
+        idx: todo
+        p: 优先级
+        '''
 
-        self.tree[idx] = p
+        change = p - self.tree[idx] # todo 将当前数据的优先级减去目标位置的优先级，得到变化量
+
+        self.tree[idx] = p # 将目标位置的优先级更新为新的优先级
         self._propagate(idx, change)
 
     def get(self, s):
@@ -171,6 +203,8 @@ class SumTree():
 
 
 class PERProportionalMemory(Memory):
+    # 看起来又是优先级队列
+    # todo 后续注释
     def __init__(self,
             capacity=1_000_000,
             alpha=0.6,
@@ -186,16 +220,29 @@ class PERProportionalMemory(Memory):
         self.enable_is = enable_is
         self.alpha = alpha
 
-        self.size = 0
+        self.size = 0 # 当前存储的经验数量
         self.max_priority = 1
 
     def add(self, exp, priority=0, _alpha_skip=False):
+        '''
+        Docstring for add
+        
+        :param self: Description
+        :param exp: 经验数据（状态，动作，奖励，下一个状态，是否结束）
+        :param priority: 优先级
+        :param _alpha_skip: 是否跳过alpha调整
+        '''
+
+        # 等于0表示使用最大优先级
         if priority == 0:
             priority = self.max_priority
-        if not _alpha_skip:
+        if not _alpha_skip: # todo 这里的作用
             priority = priority ** self.alpha
+        # 根据优先级添加经验
         self.tree.add(priority, exp)
         self.size += 1
+
+        # todo 这里超过了直接修改size？没有其他处理？
         if self.size > self.capacity:
             self.size = self.capacity
 
@@ -280,7 +327,7 @@ class PERRankBaseMemory(Memory):
             enable_is=False
         ):
         self.capacity = capacity
-        self.buffer = []
+        self.buffer = [] # 存储采集的经验的缓存
         self.alpha = alpha
         
         self.beta_initial = beta_initial
@@ -290,14 +337,25 @@ class PERRankBaseMemory(Memory):
         self.max_priority = 1
 
     def add(self, exp, priority=0):
+        '''
+        Docstring for add
+        
+        :param self: Description
+        :param exp: 经验
+        :param priority: 优先级
+        '''
+
+        # 如果优先级为0，则使用当前最大优先级
         if priority == 0:
             priority = self.max_priority
         if self.capacity <= len(self.buffer):
             # 上限より多い場合は要素を削除
+            # 如果存储的容量超限则弹出最早的经验
             self.buffer.pop(0)
         
+        # 构建一个存储经验数据和优先级的组合经验，包装成可比较对象
         exp = _bisect_wrapper(exp, priority)
-        bisect.insort(self.buffer, exp)
+        bisect.insort(self.buffer, exp) # 将经验插入到缓存中，并按照优先级放置到合适的位置
 
     def update(self, index, exp, priority):
         exp = _bisect_wrapper(exp, priority)
@@ -373,12 +431,28 @@ class PERRankBaseMemory(Memory):
 
 
 class EpisodeMemory(Memory):
+    '''
+    Docstring for EpisodeMemory
+    这个我猜测是用来完整地存储一个episode的经验数据的
+    '''
+
     def __init__(self, memory, verbose):
-        self.max_reward = None
+        '''
+        Docstring for __init__
+        
+        :param self: Description
+        :param memory: 底层存储的记忆对象，根据训练时配置的参数可知，这里是PERProportionalMemory
+        :param verbose: 冗长模式 todo 作用
+        '''
+        self.max_reward = None # 存储不同游戏生命周期内最大的一次奖励回报
         self.memory = memory
         self.verbose = verbose
     
     def add_episode(self, episode, total_reward):
+        '''
+        episode: 一局游戏的所有连续数据采集
+        total_reward: 总奖励
+        '''
         if self.memory is None:
             return
         if self.max_reward is None:
@@ -388,7 +462,8 @@ class EpisodeMemory(Memory):
         else:
             return
         for e in episode:
-            if len(e) == 5:
+            if len(e) == 5: # todo 为什么会有长度之分
+                # e[4]代表优先级
                 self.memory.add(e, e[4])
             else:
                 self.memory.add(e)

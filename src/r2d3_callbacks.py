@@ -13,6 +13,7 @@ from .common import LoggerType
 
 
 class SaveManager(R2D3Callback):
+    # 主要的作用是保存和加载模型的权重
     def __init__(self, # 补齐以下参数的作用
             save_dirpath,
             is_load=False,
@@ -31,6 +32,12 @@ class SaveManager(R2D3Callback):
         self.verbose = verbose
 
     def on_r2d3_learner_begin(self, learner):
+        '''
+        Docstring for 该回调的方法就是在训练前加载已有的权重和记忆
+        
+        :param self: Description
+        :param learner: Description
+        '''
         if not self.is_load:
             return
         path = os.path.join(self.save_dirpath, "last", "learner.dat")
@@ -43,6 +50,7 @@ class SaveManager(R2D3Callback):
             return
         n = learner.train_count.value
         if (n+1) % self.checkpoint_interval == 0:
+            # 这里是正式保存的权重的地方
             dirname = self._get_checkpoint_dir(n+1)
             path = os.path.join(dirname, "learner.dat")
             if self.verbose > 0:
@@ -50,6 +58,7 @@ class SaveManager(R2D3Callback):
             learner.save_weights(path, overwrite=True, save_memory=self.save_memory)
 
     def on_r2d3_learner_end(self, learner):
+        # 回调保存模型
         dirname = os.path.join(self.save_dirpath, "last")
         os.makedirs(dirname, exist_ok=True)
         path = os.path.join(dirname, "learner.dat")
@@ -123,7 +132,7 @@ class Logger2StageR2D3(R2D3Callback):
         with open(path, "a") as f:
             f.write("{}\n".format(json.dumps(data)))
 
-    def _is_record(self):
+    def _is_record(self): # 后面看看
         if self.stage == 1:
             if time.time() - self.t1 < self.warmup:
                 return False
@@ -168,23 +177,28 @@ class Logger2StageR2D3(R2D3Callback):
         if self.test_actor is not None:
             with tempfile.TemporaryDirectory() as tmpdir:
                 name = os.path.join(tmpdir, "tmp")
-                learner.save_weights(name, overwrite=True)
+                learner.save_weights(name, overwrite=True) # 在临时目录保存权重
                 test_agent = R2D3.createTestAgentStatic(learner.kwargs, self.test_actor, name)
+            # 这里是对训练的模型进行测试，得到测试的奖励情况
             history = test_agent.test(self.test_env, nb_episodes=self.test_episodes, visualize=False, verbose=False)
             rewards = np.asarray(history.history["episode_reward"])
 
+            # 记录测试的奖励情况
             d["test_reward_min"] = float(rewards.min())
             d["test_reward_ave"] = float(rewards.mean())
             d["test_reward_med"] = float(np.median(rewards))
             d["test_reward_max"] = float(rewards.max())
         else:
+            # 如果没有测试actor，就全部置0
             d["test_reward_min"] = 0
             d["test_reward_ave"] = 0
             d["test_reward_med"] = 0
             d["test_reward_max"] = 0
         
+        # 记录一次训练完成的日志
         self._add_logfile("learner.json", d)
         if self.verbose > 0:
+            # 这里是打印训练进展的地方
             m = d["time"] / 60.0
             print("{:8} Train {}, Time: {:.2f}m, TestReward: {:7.2f} - {:7.2f} (ave: {:7.2f}, med: {:7.2f})".format(
                 d["name"],

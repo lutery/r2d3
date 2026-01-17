@@ -308,6 +308,7 @@ class R2D3():
         
     @staticmethod
     def createTestAgentStatic(manager_kwargs, test_actor, learner_model_path):
+        # todo 这里应该是加载刚刚保存的learner模型的权重
         test_actor = ActorRunner(-1, manager_kwargs, test_actor(), None, None, None, None)
         with open(learner_model_path, 'rb') as f:
             d = pickle.load(f)
@@ -447,24 +448,27 @@ def learner_run(
     callbacks = kwargs["callbacks"]
 
     try:
+        # 构建学习器
         runner = LearnerRunner(kwargs, exp_q, weights_qs, train_count)
-    
+        
+        # 通过回调加载权重，感觉设计不好
         callbacks.on_r2d3_learner_begin(runner)
 
         # learner はひたすら学習する
         if verbose > 0:
+            # 日志等级
             print("Learner Start!")
         
         while True:
-            callbacks.on_r2d3_learner_train_begin(runner)
+            callbacks.on_r2d3_learner_train_begin(runner) # 当前代码中没有任何实现
             runner.train()
-            callbacks.on_r2d3_learner_train_end(runner)
+            callbacks.on_r2d3_learner_train_end(runner) # 保存权重，测试训练结果等
 
             # 終了判定
-            if learner_end_signal.value:
+            if learner_end_signal.value: # 终止训练信号触发，则推出训练
                 break
 
-            # 終了判定
+            # 終了判定 # 如果设置了训练总步数，并且当前训练步数超过总步数，则退出训练
             if nb_trains > 0:
                 if runner.train_count.value > nb_trains:
                     break
@@ -472,17 +476,18 @@ def learner_run(
     except KeyboardInterrupt:
         pass
     except Exception:
-        print(traceback.format_exc())
+        print(traceback.format_exc()) # 打印异常信息，会输出类似java的堆栈信息
 
     try:
         if verbose > 0:
+            # 训练结束
             print("Learning End. Train Count:{}".format(runner.train_count.value))
 
-        callbacks.on_r2d3_learner_end(runner)
+        callbacks.on_r2d3_learner_end(runner) # 通知回调，训练结束，1：保存权重；2：测试训练结果
     except Exception:
         print(traceback.format_exc())
 
-    is_learner_end.value = True
+    is_learner_end.value = True # 发送训练结束的信号
 
 class LearnerRunner():
     def __init__(self,
@@ -508,8 +513,8 @@ class LearnerRunner():
         # 后续根据注释的进度进行调整
         self.input_shape = kwargs["input_shape"]
         self.enable_rescaling = kwargs["enable_rescaling"]
-        self.memory = kwargs["memory"]
-        self.memory_warmup_size = kwargs["memory_warmup_size"]
+        self.memory = kwargs["memory"] # 经验回放记忆 PERRankBaseMemory
+        self.memory_warmup_size = kwargs["memory_warmup_size"] # 这个训练前采集经验数据长度的预热尺寸，如果采集的经验数据不足指定大小则继续采集不进行训练
         self.gamma = kwargs["gamma"]
         self.batch_size = kwargs["batch_size"]
         self.enable_double_dqn = kwargs["enable_double_dqn"]
@@ -518,7 +523,7 @@ class LearnerRunner():
         self.lstm_type = kwargs["lstm_type"]
         self.burnin_length = kwargs["burnin_length"]
         self.priority_exponent = kwargs["priority_exponent"]
-        self.actor_model_sync_interval = kwargs["actor_model_sync_interval"]
+        self.actor_model_sync_interval = kwargs["actor_model_sync_interval"] # 根据训练的步数，每隔多少步同步一次模型给actor
         self.reward_multisteps = kwargs["reward_multisteps"]
         self.lstm_ful_input_length = kwargs["lstm_ful_input_length"]
         self.demo_memory = kwargs["demo_memory"]
@@ -530,7 +535,7 @@ class LearnerRunner():
             self.episode_ratio = 0
         else:
             self.episode_memory = EpisodeMemory(kwargs["episode_memory"], kwargs["episode_verbose"])
-            self.episode_ratio = kwargs["episode_ratio"]
+            self.episode_ratio = kwargs["episode_ratio"] # todo 这个参数的作用
 
         if self.demo_memory is not None: # 确认这个demo_memory是不是就是引导学习，学习前人的经验加快收敛
             add_memory(kwargs["demo_episode_dir"], self.demo_memory, self)
@@ -553,24 +558,31 @@ class LearnerRunner():
         # train_count
         self.train_count = train_count
 
-        # model create
+        # model create 创建模型，分为目标模型和待训练模型
         self.model = build_compile_model(kwargs)
         self.target_model = build_compile_model(kwargs)
 
         if self.lstm_type == LstmType.STATEFUL:
+            # 如果是有状态的还必须有提取其中的LSTM层
+            # todo 干嘛？
             self.lstm = self.model.get_layer("lstm")
             self.target_lstm = self.target_model.get_layer("lstm")
 
+        # todo episode_memory是干嘛的？
         if self.episode_memory is not None:
+            # 如果使用了episode memory，则需要存储每个actor的当前episode数据
             self.episode_exp = [ [] for _ in range(self.actors_num)]
+            # 总奖励
             self.total_reward = [ 0 for _ in range(self.actors_num)]
 
 
     def train(self):
+        # 训练模型
         _train_count = self.train_count.value
         
         # 一定毎に Actor に weights を送る
         if _train_count% self.actor_model_sync_interval == 0:
+            # 同步模型的权重到权重队列
             weights = self.model.get_weights()
             for q in self.weights_qs:
                 # 送る
@@ -578,12 +590,19 @@ class LearnerRunner():
         
         # experience があれば RemoteMemory に追加
         for _ in range(self.exp_q.qsize()):
-            exp = self.exp_q.get(timeout=1)
+            # 从经验队列提取经验
+            exp = self.exp_q.get(timeout=1) # todo 貌似没看到具体在哪里送入进来
 
-            # add memory
-            self.memory.add(exp[0], exp[0][4])
+            # add memory 添加经验到记忆
+            # todo exp[0][4] 表示优势值，这里的优势值是怎么计算的
+            # exp[0] 表示经验
+            # exp[1] 存储的是第几个actor
+            # exp[3] 对于有状态的模型 是动作执行所获的的奖励 / 对于 无状态的模型是exp[0][2]
+            # exp[2] 存储的是游戏是否中断
+            # exp2[4] 代表优先级
+            self.memory.add(exp[0], exp[0][4]) 
             if self.episode_memory is not None:
-                self.episode_exp[exp[1]].append(exp[0])
+                self.episode_exp[exp[1]].append(exp[0]) # 将经验存储到 episode_exp 中指定的actor的队列
                 if self.lstm_type == LstmType.STATEFUL:
                     self.total_reward[exp[1]] += exp[3]
                 else:
@@ -593,24 +612,27 @@ class LearnerRunner():
             if exp[2]:  # terminal
                 if self.enable_terminal_zero_reward and exp[2] != 0:
                     # 終了時に報酬が0以外なら0報酬の状態も追加
-                    if self.lstm_type != LstmType.STATEFUL:
+                    if self.lstm_type != LstmType.STATEFUL: # 以下if 块是针对无状态的 todo 为什么有状态的不用？
                         # STATEFUL はActor側で追加
+                        # todo 这几个序号代表什么？
                         exp2 = (exp[0][0], exp[0][1], 0, exp[0][3], exp[0][4])
-                        self.memory.add(exp2, exp2[4])
+                        self.memory.add(exp2, exp2[4]) # todo 这里也是，为什么要继续存储之前已经存储过的数据？
                         if self.episode_memory is not None:
-                            self.episode_exp[exp[1]].append(exp2)
+                            self.episode_exp[exp[1]].append(exp2) # 将结束时的状态保存到episode_exp中，todo 之前不是已经存储过了吗？这里为啥还要存储
 
                 # episode_memory
                 if self.episode_memory is not None:
+                    # 将存储的一局游戏采集直接打包添加到episode_memory
                     self.episode_memory.add_episode(
                         self.episode_exp[exp[1]],
                         self.total_reward[exp[1]]
                     )
+                    # 重置一局的数据
                     self.episode_exp[exp[1]] = []
                     self.total_reward[exp[1]] = 0
                     
 
-        # RemoteMemory が一定数貯まるまで学習しない。
+        # RemoteMemory が一定数貯まるまで学習しない。 训练预热
         if len(self.memory) <= self.memory_warmup_size:
             return
 
@@ -1371,6 +1393,7 @@ class R2D3Callback(rl.callbacks.Callback):
         pass
 
     def on_r2d3_learner_begin(self, learner):
+        # 用于训练前读学习器进行预处理 
         pass
     
     def on_r2d3_learner_end(self, learner):
