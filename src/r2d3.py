@@ -641,13 +641,16 @@ class LearnerRunner():
         batch_demo = 0
         batch_episode = 0
 
+        # todo 以下这边时在做啥？
         ratio_demo = self.demo_ratio_initial - _train_count * self.demo_ratio_step
         if ratio_demo < self.demo_ratio_final:
             ratio_demo = self.demo_ratio_final
+        # todo 以下这块时在做啥？
         if self.episode_memory is None or len(self.episode_memory) < self.batch_size:
             ratio_epi = 0
         else:
             ratio_epi = self.episode_ratio
+        # todo 以下这边时在做啥？
         for _ in range(self.batch_size):
             r = random.random()
             if r < ratio_demo:

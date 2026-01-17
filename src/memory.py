@@ -365,6 +365,12 @@ class PERRankBaseMemory(Memory):
             self.max_priority = priority
 
     def sample(self, batch_size, step):
+        '''
+        采样
+
+        batch_size: 采样的数量
+        step: 训练的步数（总步数）
+        '''
         indexes = []
         batchs = []
         weights = np.empty(batch_size, dtype='float32')
