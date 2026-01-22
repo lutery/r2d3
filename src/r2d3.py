@@ -321,6 +321,7 @@ class R2D3():
 #---------------------------------------------------
 def build_compile_model(kwargs):
     # 根据参数构建模型
+    # 构建的模型最终预测的是每个动作的Q值
     input_shape = kwargs["input_shape"]
     input_type = kwargs["input_type"]
     image_model = kwargs["image_model"]
@@ -525,7 +526,7 @@ class LearnerRunner():
         self.priority_exponent = kwargs["priority_exponent"]
         self.actor_model_sync_interval = kwargs["actor_model_sync_interval"] # 根据训练的步数，每隔多少步同步一次模型给actor
         self.reward_multisteps = kwargs["reward_multisteps"]
-        self.lstm_ful_input_length = kwargs["lstm_ful_input_length"]
+        self.lstm_ful_input_length = kwargs["lstm_ful_input_length"] # 这个应该就是lstm训练预测的长度？todo
         self.demo_memory = kwargs["demo_memory"]
         self.enable_terminal_zero_reward = kwargs["enable_terminal_zero_reward"]
 
@@ -663,37 +664,37 @@ class LearnerRunner():
                 batch_replay += 1
         
         # memory から優先順位に基づき状態を取得
-        indexes = []
-        batchs = []
-        weights = []
-        memory_types = []
+        indexes = [] # 存储采样的经验在记忆中的索引
+        batchs = [] # 存储采样的经验数据
+        weights = [] # 存储采样的经验的权重优先级
+        memory_types = [] # 存储用于训练的经验来源：实时和环境交互的缓冲区、还是在演示数据缓冲区、还是episode memory缓冲区
         if batch_replay > 0:
             (i, b, w) = self.memory.sample(batch_replay, _train_count)
             indexes.extend(i)
             batchs.extend(b)
             weights.extend(w)
-            memory_types.extend([0 for _ in range(batch_replay)])
+            memory_types.extend([0 for _ in range(batch_replay)]) # 0 表示对应位置的训练数据是来自环境交互的经验缓冲区
         if batch_demo > 0:
-            (i, b, w) = self.demo_memory.sample(batch_demo, _train_count)
+            (i, b, w) = self.demo_memory.sample(batch_demo, _train_count) # todo 后续注释
             indexes.extend(i)
             batchs.extend(b)
             weights.extend(w)
-            memory_types.extend([1 for _ in range(batch_demo)])
+            memory_types.extend([1 for _ in range(batch_demo)]) # 1 表示对应位置的训练数据是来自演示数据缓冲区
         if batch_episode > 0:
-            (i, b, w) = self.episode_memory.sample(batch_episode, _train_count)
+            (i, b, w) = self.episode_memory.sample(batch_episode, _train_count) # todo 后续注释
             indexes.extend(i)
             batchs.extend(b)
             weights.extend(w)
-            memory_types.extend([2 for _ in range(batch_episode)])
+            memory_types.extend([2 for _ in range(batch_episode)]) # 2 表示对应位置的训练数据是来自episode memory缓冲区
         
         # 学習(長いので関数化)
-        if self.lstm_type == LstmType.STATEFUL:
-            self.train_model_ful(indexes, batchs, weights, memory_types)
+        if self.lstm_type == LstmType.STATEFUL: # 有带历史隐藏状态的LSTM网络训练
+            self.train_model_ful(indexes, batchs, weights, memory_types) # 针对有状态的LSTM网络进行训练
         else:
-            self.train_model(indexes, batchs, weights, memory_types)
-        self.train_count.value += 1  # 書き込みは一人なのでlockは不要
+            self.train_model(indexes, batchs, weights, memory_types) # 针对无状态的LSTM网络进行训练
+        self.train_count.value += 1  # 書き込みは一人なのでlockは不要 每次完成训练更新训练次数
 
-        # target networkの更新
+        # target networkの更新 这里就不用说了，每隔一定的时间将权重同步到目标模型
         if self.train_count.value % self.target_model_update == 0:
             self.target_model.set_weights(self.model.get_weights())
     
@@ -753,79 +754,105 @@ class LearnerRunner():
 
     # ステートフルLSTMの学習
     def train_model_ful(self, indexes, batchs, weights, memory_types):
+        '''
+        Docstring for train_model_ful
+        
+        :param self: Description
+        :param indexes: 待训练数据在原缓冲区的索引位置
+        :param batchs: 待训练的实际数据
+        :param weights: 待训练数据的权重优先级 todo
+        :param memory_types: 每个待训练数据的缓冲区来源（因为存在多个缓冲区）
 
-        hidden_s0 = []
+        batchs[batch_i][0]  # state 序列
+        batchs[batch_i][1] # action 序列
+        batchs[batch_i][2] # reward 序列
+        '''
+
+        # 从缓冲区恢复隐藏状态s0和s1
+        # todo 为什么会分两个隐藏状态？是tf的特性还是LSTM的特性
+        hidden_s0 = [] 
         hidden_s1 = []
         for batch in batchs:
             # batchサイズ分あるけどすべて同じなので0番目を取得
+            # 从这里可以看出现有代码中隐藏状态放在数据的[3],其中[3][0]是隐藏状态s0,[3][1]是隐藏状态s1
             hidden_s0.append(batch[3][0][0])
             hidden_s1.append(batch[3][1][0])
+        # 将隐藏状态合并，batch中的每条数据对应一个隐藏状态，适合批量计算
         hidden_states = [np.asarray(hidden_s0), np.asarray(hidden_s1)]
 
-         # init hidden_state
+         # init hidden_state 恢复隐藏状态
         self.lstm.reset_states(hidden_states)
         self.target_lstm.reset_states(hidden_states)
 
         # predict
-        hidden_states_arr = []
+        hidden_states_arr = [] # todo 这个是做什么的？
         if self.burnin_length == 0:
             hidden_states_arr.append(hidden_states)
+        # todo
         state_batch_arr = []
         model_qvals_arr = []
         target_qvals_arr = []
-        prioritys = [ [] for _ in range(self.batch_size)]
+        prioritys = [ [] for _ in range(self.batch_size)] # 这个应该就是存储训练数据的优先级
+        # 这三个长度分别的作用是啥？
         for seq_i in range(self.burnin_length + self.reward_multisteps + self.lstm_ful_input_length):
 
-            # state
+            # state batch[0]应该是存储环境观察采集的数据
+            # todo 但是batch[0][seq_i] 是什么？ 也就是采集的样本必须是一个序列，每次仅提取序列中的一个时序进行训练？
             state_batch = [ batch[0][seq_i] for batch in batchs ]
             state_batch = np.asarray(state_batch)
             
             # hidden_state更新およびQ値取得
+            # 分别用待训练模型和目标模型训练根据环境观察预测
             model_qvals = self.model.predict(state_batch, self.batch_size)
             target_qvals = self.target_model.predict(state_batch, self.batch_size)
 
-            # burnin-1
+            # burnin-1 如果当前训练的进度依旧在预测阶段，则直接开始进行下一个样本的训练预热
             if seq_i < self.burnin_length-1:
                 continue
+            # todo 这边是干嘛的？看起来是存储经过预热后的隐藏层状态的动作
             hidden_states_arr.append([K.get_value(self.lstm.states[0]), K.get_value(self.lstm.states[1])])
 
             # burnin
             if seq_i < self.burnin_length:
                 continue
 
-            state_batch_arr.append(state_batch)
-            model_qvals_arr.append(model_qvals)
-            target_qvals_arr.append(target_qvals)
+            state_batch_arr.append(state_batch) # 存储经过预热后的环境样本
+            model_qvals_arr.append(model_qvals) # 存储经过预热后的环境动作Q值
+            target_qvals_arr.append(target_qvals) # 存储经过预热后的目标模型预测的动作Q值
 
-        # train
+        # train 正式进行训练
         for seq_i in range(self.lstm_ful_input_length):
 
             # state0 の Qval (multistep前)
+            # 从预热后的数据中提取当前时序的动作Q值
             state0_qvals = model_qvals_arr[seq_i]
             
-            # batch
+            # batch 遍历每一个样本 这里面应该是为了bellman公式中的target部分获取对应的值
+            # todo 是否可以批量操作？
             for batch_i in range(self.batch_size):
 
                 # maxq
-                if self.enable_double_dqn:
+                if self.enable_double_dqn: # 双DQN算法
+                    # 用待训练网络预测动作，然后用目标网络结合动作得到对应动作的Q值
                     action = model_qvals_arr[seq_i+self.reward_multisteps][batch_i].argmax()  # modelからアクションを出す
                     maxq = target_qvals_arr[seq_i+self.reward_multisteps][batch_i][action]  # Q値はtarget_modelを使って出す
                 else:
+                    # 直接从目标网络预测的Q值中获取最大Q值
                     maxq = target_qvals_arr[seq_i+self.reward_multisteps][batch_i].max()
 
                 # priority
-                batch_action = batchs[batch_i][1][seq_i]
-                q0 = state0_qvals[batch_i][batch_action]
-                reward = batchs[batch_i][2][seq_i]
-                td_error = reward + (self.gamma ** self.reward_multisteps) * maxq - q0
-                priority = abs(td_error)
-                prioritys[batch_i].append(priority)
+                batch_action = batchs[batch_i][1][seq_i] # 获取对应采集数据对应序列位置执行的动作
+                q0 = state0_qvals[batch_i][batch_action] # 获取对应训练数据对应动作的Q值
+                reward = batchs[batch_i][2][seq_i] # 获取对应训练数据对应序列位置执行动作获得的奖励
+                td_error = reward + (self.gamma ** self.reward_multisteps) * maxq - q0 # 1. 获取预测的Q值和实际的Q值之间的误差；2. 应该也是在计算优势，如果当前的动作获取的回报大于预测的Q值，说明当前动作优势大，要提高准确率，反之则降低
+                priority = abs(td_error) # 将预测Q值误差切换为优先级，误差较大的优先级大
+                prioritys[batch_i].append(priority) # 更新每个样本序列对应的训练优先级
 
-                # Q値の更新
+                # Q値の更新 根据误差更新预测的Q值（但不是完全更新，会根据权重调整达到一个接近的效果）
                 state0_qvals[batch_i][batch_action] += td_error * weights[batch_i]
 
             # train
-            self.lstm.reset_states(hidden_states_arr[seq_i])
+            self.lstm.reset_states(hidden_states_arr[seq_i]) # 提取对应序列帧的隐藏状态恢复到lstm网络
             self.model.train_on_batch(state_batch_arr[seq_i], state0_qvals)
             
         # priority update

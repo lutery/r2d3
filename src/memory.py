@@ -328,7 +328,7 @@ class PERRankBaseMemory(Memory):
         ):
         self.capacity = capacity
         self.buffer = [] # 存储采集的经验的缓存
-        self.alpha = alpha
+        self.alpha = alpha # todo 啥作用
         
         self.beta_initial = beta_initial
         self.beta_steps = beta_steps
@@ -375,17 +375,17 @@ class PERRankBaseMemory(Memory):
         batchs = []
         weights = np.empty(batch_size, dtype='float32')
 
-        if self.enable_is:
+        if self.enable_is: # todo 啥作用
             # βは最初は低く、学習終わりに1にする。
             beta = self.beta_initial + (1 - self.beta_initial) * step / self.beta_steps
             if beta > 1:
                 beta = 1
 
         # 合計値をだす
-        buffer_size = len(self.buffer)
-        total = rank_sum(buffer_size, self.alpha)
+        buffer_size = len(self.buffer) # 缓冲区长度
+        total = rank_sum(buffer_size, self.alpha) # todo 这个是在计算啥？
         
-        # index_lst
+        # index_lst todo 这里应该是某种算法采样
         index_lst = []
         for _ in range(batch_size):
 
@@ -401,8 +401,9 @@ class PERRankBaseMemory(Memory):
         #assert len(index_lst) == batch_size
         index_lst.sort()
 
+        # todo 后续注释
         for i, index in enumerate(reversed(index_lst)):
-            o = self.buffer.pop(index)  # 後ろから取得するのでindexに変化なし
+            o = self.buffer.pop(index)  # 後ろから取得するのでindexに変化なし 看来存储的数据是一次性采样的，采样后就从缓存中删除
             batchs.append(o.data)
             indexes.append(index)
 
