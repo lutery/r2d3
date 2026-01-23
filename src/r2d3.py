@@ -523,7 +523,7 @@ class LearnerRunner():
         self.input_sequence = kwargs["input_sequence"]
         self.lstm_type = kwargs["lstm_type"]
         self.burnin_length = kwargs["burnin_length"]
-        self.priority_exponent = kwargs["priority_exponent"]
+        self.priority_exponent = kwargs["priority_exponent"] ## todo
         self.actor_model_sync_interval = kwargs["actor_model_sync_interval"] # 根据训练的步数，每隔多少步同步一次模型给actor
         self.reward_multisteps = kwargs["reward_multisteps"]
         self.lstm_ful_input_length = kwargs["lstm_ful_input_length"] # 这个应该就是lstm训练预测的长度？todo
@@ -700,10 +700,21 @@ class LearnerRunner():
     
     # ノーマルの学習
     def train_model(self, indexes, batchs, weights, memory_types):
-        state0_batch = []
-        action_batch = []
-        reward_batch = []
-        state1_batch = []
+        '''
+        Docstring for train_model
+        这里是无状态的LSTM的计算
+        
+        :param self: Description
+        :param indexes: Description
+        :param batchs: Description
+        :param weights: Description
+        :param memory_types: Description
+        '''
+
+        state0_batch = [] # 输入的状态列表
+        action_batch = [] # 执行的动作列表
+        reward_batch = [] # 获取的奖励列表
+        state1_batch = [] # 下一个状态列表
         for batch in batchs:
             state0_batch.append(batch[0])
             action_batch.append(batch[1])
@@ -712,18 +723,22 @@ class LearnerRunner():
         state0_batch = np.asarray(state0_batch)
         state1_batch = np.asarray(state1_batch)
 
-        # 更新用に現在のQネットワークを出力(Q network)
+        # 更新用に現在のQネットワークを出力(Q network) 一次性通过输入的状态预测状态的动作Q值分布
+        # todo 这里输入的状态是一个序列吗？
         state0_qvals = self.model.predict(state0_batch, self.batch_size)
 
         if self.enable_double_dqn:
             # TargetNetworkとQNetworkのQ値を出す
+            # 双DQN，两个模型分别预测下一个状态的动作Q值分布
             state1_qvals_model = self.model.predict(state1_batch, self.batch_size)
             state1_qvals_target = self.target_model.predict(state1_batch, self.batch_size)
         else:
             # 次の状態のQ値を取得(target_network)
+            # 只用目标模型预测下一个状态的动作Q值分布
             state1_qvals_target = self.target_model.predict(state1_batch, self.batch_size)
 
         for i in range(self.batch_size):
+            # 获取最大动作的Q值
             if self.enable_double_dqn:
                 action = state1_qvals_model[i].argmax()  # modelからアクションを出す
                 maxq = state1_qvals_target[i][action]  # Q値はtarget_modelを使って出す
@@ -756,6 +771,7 @@ class LearnerRunner():
     def train_model_ful(self, indexes, batchs, weights, memory_types):
         '''
         Docstring for train_model_ful
+        有状态的LSTM是手动的一个序列的一帧一帧的计算
         
         :param self: Description
         :param indexes: 待训练数据在原缓冲区的索引位置
@@ -853,14 +869,16 @@ class LearnerRunner():
 
             # train
             self.lstm.reset_states(hidden_states_arr[seq_i]) # 提取对应序列帧的隐藏状态恢复到lstm网络
+            # 输出state_batch_arr[seq_i]让model预测动作的q值分布，然后和state0_qvals进行对比计算损失并更新模型
             self.model.train_on_batch(state_batch_arr[seq_i], state0_qvals)
             
-        # priority update
+        # priority update 更新训练数据的优先级
         for i, batch in enumerate(batchs):
+            # todo 这里更新优先级的公式是怎么来的？
             priority = self.priority_exponent * np.max(prioritys[i]) + \
                 (1-self.priority_exponent) * np.average(prioritys[i])
 
-            # priorityを更新
+            # priorityを更新 更具数据来源的不同更新对应缓冲区的数据优先级
             if memory_types[i] == 0:
                 self.memory.update(indexes[i], batch, priority)
             elif memory_types[i] == 1:

@@ -51,12 +51,12 @@ def create_parameter():
         "optimizer": Adam(lr=0.001),
         "metrics": [],
 
-        "image_model": image_model, # todo 可能是支持自定义检测模型
-        "input_sequence": 12,         # 入力フレーム数 todo
-        "dense_units_num": 32,       # dense層のユニット数 todo
-        "enable_dueling_network": True, # todo
-        "dueling_network_type": DuelingNetwork.AVERAGE,  # dueling networkで使うアルゴリズム todo
-        "lstm_type": LstmType.STATELESS,           # 使用するLSTMアルゴリズム
+        "image_model": image_model, # 可能是支持自定义检测模型 图像处理模型，主要作用是对图像序列进行特征提取（一个一个序列图片进行卷积）
+        "input_sequence": 12,         # 入力フレーム数 这个是输入的帧数类似于帧堆叠，而不是LSTM的时间步数
+        "dense_units_num": 32,       # dense層のユニット数 特征采集完成后的全连接层单元数
+        "enable_dueling_network": True, # 是否启用dueling network 双DQN, 一条预测状态价值，一条预测动作优势Q值
+        "dueling_network_type": DuelingNetwork.AVERAGE,  # dueling networkで使うアルゴリズム 这里定义双dqn最终计算Q值的方法,是平均、最大值还是加法
+        "lstm_type": LstmType.STATELESS,           # 使用するLSTMアルゴリズム LSTM的类型，这里是无状态LSTM，也可以设置为有状态LSTM
         "lstm_units_num": 32,             # LSTMのユニット数
         "lstm_ful_input_length": 2,       # ステートフルLSTMの入力数
 
