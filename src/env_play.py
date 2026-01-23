@@ -452,7 +452,7 @@ def add_memory(episode_save_dir, memory, agent):
             recent_observations = [
                 np.zeros(agent.input_shape) for _ in range(tmp)
             ] # 最近的观察缓冲区 可以用于存储最近的观察值，包装成LSTM需要的格式，比如从最近的观察中一次性取出帧堆叠的数据
-            tmp = agent.burnin_length + multi_len + 1 # todo 这个长度的每段的作用
+            tmp = agent.burnin_length + multi_len + 1 # 这个长度的每段的作用 看函数注释
             recent_observations_wrap = [
                 [np.zeros(agent.input_shape) for _ in range(agent.input_sequence)] for _ in range(tmp)
             ] # 最近的观察缓冲区，包装成LSTM需要的格式
