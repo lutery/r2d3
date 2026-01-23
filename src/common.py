@@ -56,11 +56,10 @@ class InputType(enum.Enum):
     GRAY_3ch = 4  # (width, height, 1)
     COLOR = 5     # (width, height, ch)
 
-# todo 这几个参数的含义
 class LstmType(enum.Enum):
     NONE = 0 # 不使用LSTM
-    STATELESS = 1 # 不包含上一个状态的信息，即隐藏状态
-    STATEFUL = 2 # 包含上一个状态的信息，有状态LSTM
+    STATELESS = 1 # 不包含上一个状态的信息，即隐藏状态，每次预测时都重置隐藏状态
+    STATEFUL = 2 # 包含上一个状态的信息，有状态LSTM，每次预测前都要设置一下隐藏状态
 
 class DuelingNetwork(enum.Enum):
     AVERAGE = 0

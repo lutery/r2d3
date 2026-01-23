@@ -52,7 +52,7 @@ def create_parameter():
         "metrics": [],
 
         "image_model": image_model, # 可能是支持自定义检测模型 图像处理模型，主要作用是对图像序列进行特征提取（一个一个序列图片进行卷积）
-        "input_sequence": 12,         # 入力フレーム数 这个是输入的帧数类似于帧堆叠，而不是LSTM的时间步数
+        "input_sequence": 12,         # 入力フレーム数 这个是输入的帧数类似于帧堆叠，在LSTM中就是时间步数
         "dense_units_num": 32,       # dense層のユニット数 特征采集完成后的全连接层单元数
         "enable_dueling_network": True, # 是否启用dueling network 双DQN, 一条预测状态价值，一条预测动作优势Q值
         "dueling_network_type": DuelingNetwork.AVERAGE,  # dueling networkで使うアルゴリズム 这里定义双dqn最终计算Q值的方法,是平均、最大值还是加法
@@ -122,7 +122,7 @@ class MyActor(Actor):
 
     def fit(self, index, agent):
         '''
-        todo 这个是在干嘛？
+        这个方法是调用agent的fit方法与环境进行交互，在本代码中主要是用于数据的采集
         
         :param self: Description
         :param index: Description
@@ -149,7 +149,7 @@ def run_r2d3(enable_train):
     kwargs = create_parameter() # 构建训练的参数
 
     #kwargs["actors"] = [MyActor1]
-    kwargs["actors"] = [MyActor1, MyActor2] # 多个actor todo 这几个是干嘛的？看起来适合环境交互的作用
+    kwargs["actors"] = [MyActor1, MyActor2] # 多个actor，不同的actor使用不同的动作选择策略，但是做这里只是不同的epsilon值
     kwargs["gamma"] = 0.997 # 折扣因子，应该是用于计算回报的时候使用
     kwargs["actor_model_sync_interval"] = 50  # learner から model を同期する間隔 这个看起来是有点像同步到target net的间隔
 

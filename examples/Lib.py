@@ -117,7 +117,7 @@ def run_gym_r2d3(
         test_actor=None, # 用于测试验证时的动作选择器
         log_warmup=0,
         log_interval1=10, # 日志打印间隔
-        log_interval2=0, # todo 为啥有两个间隔？
+        log_interval2=0, # 为啥有两个间隔？ 不明，但是大概率是不同阶段需要不同的记录日志的频率，阶段分为类似预热阶段、训练阶段之类的
         log_change_count=5,
         log_test_episodes=10,
         is_load_weights=False,
@@ -128,7 +128,7 @@ def run_gym_r2d3(
         log_interval2 = log_interval1
     env = gym.make(env_name) # 这里直接构建环境？不进行各种处理？
 
-    # R2D3 构建 todo 作用是啥？
+    # R2D3 主要是用于智能体的数据采集和训练管理，内部包含数据采集和训练的代码
     manager = R2D3(**kwargs)
     
     # 如果没有传入测试的动作选择器，那么就不尽兴测试验证以及相关的环境构建

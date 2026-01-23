@@ -419,6 +419,12 @@ def add_memory(episode_save_dir, memory, agent):
     :param episode_save_dir: 记忆存储的路径
     :param memory: Description
     :param agent: Description
+
+
+    burnin_length：在训练前使用固定长度的数据预热LSTM状态 todo 是如何预热的
+    input_sequence：在普通模型中是帧堆叠，在LSTM中就是时间步数
+    reward_multisteps：N-step 回报的 N（多步 TD 的跨度），所以采集抽样用于训练的样本树要额外增加一个reward_multisteps长度，这样才可以计算最后一个时间步的多步回报
+    lstm_ful_input_length：只在 LstmType.STATEFUL 这条分支里真正发挥核心作用；在 STATELESS 情况下它更多是配置保留/兼容。这里是在有状态的LSTM下训练的帧长度
     '''
 
     for fn in glob.glob(os.path.join(episode_save_dir, "episode*.dat")):
@@ -445,7 +451,7 @@ def add_memory(episode_save_dir, memory, agent):
             tmp = agent.burnin_length + agent.input_sequence + multi_len # todo 这三段的作用，为什么会比之前的缓冲区长
             recent_observations = [
                 np.zeros(agent.input_shape) for _ in range(tmp)
-            ] # 最近的观察缓冲区
+            ] # 最近的观察缓冲区 可以用于存储最近的观察值，包装成LSTM需要的格式，比如从最近的观察中一次性取出帧堆叠的数据
             tmp = agent.burnin_length + multi_len + 1 # todo 这个长度的每段的作用
             recent_observations_wrap = [
                 [np.zeros(agent.input_shape) for _ in range(agent.input_sequence)] for _ in range(tmp)

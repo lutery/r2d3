@@ -737,7 +737,7 @@ class LearnerRunner():
             # 只用目标模型预测下一个状态的动作Q值分布
             state1_qvals_target = self.target_model.predict(state1_batch, self.batch_size)
 
-        for i in range(self.batch_size):
+        for i in range(self.batch_size): # 对每个样本进行训练
             # 获取最大动作的Q值
             if self.enable_double_dqn:
                 action = state1_qvals_model[i].argmax()  # modelからアクションを出す
@@ -746,14 +746,14 @@ class LearnerRunner():
                 maxq = state1_qvals_target[i].max()
 
             # priority計算
-            q0 = state0_qvals[i][action_batch[i]]
-            td_error = reward_batch[i] + (self.gamma ** self.reward_multisteps) * maxq - q0
-            priority = abs(td_error)
+            q0 = state0_qvals[i][action_batch[i]] # 当前状态下执行动作的Q值
+            td_error = reward_batch[i] + (self.gamma ** self.reward_multisteps) * maxq - q0 # td误差计算，也就是贝尔曼公式的误差
+            priority = abs(td_error) # 将误差的绝对值作为优先级，误差越大优先级越高
 
             # Q値の更新
-            state0_qvals[i][action_batch[i]] += td_error * weights[i]
+            state0_qvals[i][action_batch[i]] += td_error * weights[i] # 根据权重更新当前状态下执行动作的Q值，todo 为什么要这么做？
 
-            # priorityを更新
+            # priorityを更新 按照不同的来源更新权重的优先级
             if memory_types[i] == 0:
                 self.memory.update(indexes[i], batchs[i], priority)
             elif memory_types[i] == 1:
@@ -763,7 +763,7 @@ class LearnerRunner():
             else:
                 assert False
 
-        # 学習
+        # 学習 训练
         self.model.train_on_batch(state0_batch, state0_qvals)
 
 
